@@ -2,7 +2,6 @@ import { createPortal } from 'react-dom'
 import { useState, useEffect } from 'react'
 import PropTypes from 'prop-types'
 import { Dialog, DialogContent, DialogTitle, TableContainer, Table, TableHead, TableRow, TableCell, TableBody, Paper } from '@mui/material'
-import moment from 'moment'
 import axios from 'axios'
 import { baseURL } from '@/store/constant'
 
@@ -13,16 +12,14 @@ const AboutDialog = ({ show, onCancel }) => {
 
     useEffect(() => {
         if (show) {
-            const latestReleaseReq = axios.get('https://api.github.com/repos/FlowiseAI/Flowise/releases/latest')
             const currentVersionReq = axios.get(`${baseURL}/api/v1/version`, {
                 withCredentials: true,
                 headers: { 'Content-type': 'application/json', 'x-request-from': 'internal' }
             })
 
-            Promise.all([latestReleaseReq, currentVersionReq])
-                .then(([latestReleaseData, currentVersionData]) => {
+            Promise.all([currentVersionReq])
+                .then(([currentVersionData]) => {
                     const finalData = {
-                        ...latestReleaseData.data,
                         currentVersion: currentVersionData.data.version
                     }
                     setData(finalData)
@@ -54,8 +51,6 @@ const AboutDialog = ({ show, onCancel }) => {
                             <TableHead>
                                 <TableRow>
                                     <TableCell>Current Version</TableCell>
-                                    <TableCell>Latest Version</TableCell>
-                                    <TableCell>Published At</TableCell>
                                 </TableRow>
                             </TableHead>
                             <TableBody>
@@ -63,12 +58,6 @@ const AboutDialog = ({ show, onCancel }) => {
                                     <TableCell component='th' scope='row'>
                                         {data.currentVersion}
                                     </TableCell>
-                                    <TableCell component='th' scope='row'>
-                                        <a target='_blank' rel='noreferrer' href={data.html_url}>
-                                            {data.name}
-                                        </a>
-                                    </TableCell>
-                                    <TableCell>{moment(data.published_at).fromNow()}</TableCell>
                                 </TableRow>
                             </TableBody>
                         </Table>

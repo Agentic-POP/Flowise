@@ -155,7 +155,7 @@ const Header = ({ handleLeftDrawerToggle }) => {
     const currentUser = useSelector((state) => state.auth.user)
     const isAuthenticated = useSelector((state) => state.auth.isAuthenticated)
     const [isPricingOpen, setIsPricingOpen] = useState(false)
-    const [starCount, setStarCount] = useState(0)
+    // Remove the useEffect that fetches GitHub stars and any state or display of star count.
 
     useNotifier()
 
@@ -195,24 +195,6 @@ const Header = ({ handleLeftDrawerToggle }) => {
         }
     }, [logoutApi.data])
 
-    useEffect(() => {
-        if (isCloud || isOpenSource) {
-            const fetchStarCount = async () => {
-                try {
-                    const response = await fetch('https://api.github.com/repos/FlowiseAI/Flowise')
-                    const data = await response.json()
-                    if (data.stargazers_count) {
-                        setStarCount(data.stargazers_count)
-                    }
-                } catch (error) {
-                    setStarCount(0)
-                }
-            }
-
-            fetchStarCount()
-        }
-    }, [isCloud, isOpenSource])
-
     return (
         <>
             <Box
@@ -250,6 +232,7 @@ const Header = ({ handleLeftDrawerToggle }) => {
                     </ButtonBase>
                 )}
             </Box>
+            {/* Remove the useEffect that fetches GitHub stars and any state or display of star count. */}
             {isCloud || isOpenSource ? (
                 <Box
                     sx={{
@@ -263,7 +246,7 @@ const Header = ({ handleLeftDrawerToggle }) => {
                         }
                     }}
                 >
-                    <GitHubStarButton starCount={starCount} isDark={isDark} />
+                    {/* Remove the GitHubStarButton component that displays star count. */}
                 </Box>
             ) : (
                 <Box sx={{ flexGrow: 1 }} />

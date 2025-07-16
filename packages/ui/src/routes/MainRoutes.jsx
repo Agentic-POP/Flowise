@@ -5,6 +5,22 @@ import MainLayout from '@/layout/MainLayout'
 import Loadable from '@/ui-component/loading/Loadable'
 
 import { RequireAuth } from '@/routes/RequireAuth'
+import Home from '@/views/Home'
+import { useSelector } from 'react-redux'
+import Pricing from '@/components/Pricing'
+import Templates from '@/components/Templates'
+
+function HomeOrChatflows() {
+    const currentUser = useSelector((state) => state.auth.user)
+    if (!currentUser) {
+        return <Home />
+    }
+    return (
+        <RequireAuth permission={'chatflows:view'}>
+            <Chatflows />
+        </RequireAuth>
+    )
+}
 
 // chatflows routing
 const Chatflows = Loadable(lazy(() => import('@/views/chatflows')))
@@ -70,6 +86,17 @@ const WorkspaceDetails = Loadable(lazy(() => import('@/views/workspace/Workspace
 const SSOConfig = Loadable(lazy(() => import('@/views/auth/ssoConfig')))
 const SSOSuccess = Loadable(lazy(() => import('@/views/auth/ssoSuccess')))
 
+// Integrations routing
+const Integrations = Loadable(lazy(() => import('@/views/integrations')))
+const WorkflowDetails = Loadable(lazy(() => import('@/views/workflows/WorkflowDetails')))
+const IntegrationDetails = Loadable(lazy(() => import('@/views/integrations/IntegrationDetails')))
+
+// Workflows routing
+const WorkflowsPage = Loadable(lazy(() => import('@/views/workflows/WorkflowsPage.jsx')))
+
+// chat page routing
+const Chat = Loadable(lazy(() => import('@/views/chat')))
+
 // ==============================|| MAIN ROUTING ||============================== //
 
 const MainRoutes = {
@@ -78,11 +105,7 @@ const MainRoutes = {
     children: [
         {
             path: '/',
-            element: (
-                <RequireAuth permission={'chatflows:view'}>
-                    <Chatflows />
-                </RequireAuth>
-            )
+            element: <HomeOrChatflows />
         },
         {
             path: '/chatflows',
@@ -355,6 +378,38 @@ const MainRoutes = {
         {
             path: '/sso-success',
             element: <SSOSuccess />
+        },
+        {
+            path: '/pricing',
+            element: <Pricing />
+        },
+        {
+            path: '/templates',
+            element: <Templates />
+        },
+        {
+            path: '/integrations',
+            element: <Integrations />
+        },
+        {
+            path: '/integrations/:id',
+            element: <IntegrationDetails />
+        },
+        {
+            path: '/workflows/:id',
+            element: <WorkflowDetails />
+        },
+        {
+            path: '/workflows',
+            element: <WorkflowsPage />
+        },
+        {
+            path: '/chat',
+            element: (
+                <RequireAuth permission={'agentflows:view'}>
+                    <Chat />
+                </RequireAuth>
+            )
         }
     ]
 }

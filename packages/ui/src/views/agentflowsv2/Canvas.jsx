@@ -58,13 +58,15 @@ import { usePrompt } from '@/utils/usePrompt'
 
 // const
 import { FLOWISE_CREDENTIAL_ID, AGENTFLOW_ICONS } from '@/store/constant'
+import PropTypes from 'prop-types'
 
 const nodeTypes = { agentFlow: CanvasNode, stickyNote: StickyNote, iteration: IterationNode }
 const edgeTypes = { agentFlow: AgentFlowEdge }
 
 // ==============================|| CANVAS ||============================== //
 
-const AgentflowCanvas = () => {
+// Accept chatflowId as a prop (for chat tab/canvas integration)
+const AgentflowCanvas = ({ chatflowId: propChatflowId }) => {
     const theme = useTheme()
     const navigate = useNavigate()
     const customization = useSelector((state) => state.customization)
@@ -72,9 +74,11 @@ const AgentflowCanvas = () => {
     const { state } = useLocation()
     const templateFlowData = state ? state.templateFlowData : ''
 
+    // Use prop if provided, otherwise fallback to URL
     const URLpath = document.location.pathname.toString().split('/')
-    const chatflowId =
+    const urlChatflowId =
         URLpath[URLpath.length - 1] === 'canvas' || URLpath[URLpath.length - 1] === 'agentcanvas' ? '' : URLpath[URLpath.length - 1]
+    const chatflowId = propChatflowId || urlChatflowId
     const canvasTitle = URLpath.includes('agentcanvas') ? 'Agent' : 'Chatflow'
 
     const { confirm } = useConfirm()
@@ -795,6 +799,10 @@ const AgentflowCanvas = () => {
             </Box>
         </>
     )
+}
+
+AgentflowCanvas.propTypes = {
+    chatflowId: PropTypes.string
 }
 
 export default AgentflowCanvas
