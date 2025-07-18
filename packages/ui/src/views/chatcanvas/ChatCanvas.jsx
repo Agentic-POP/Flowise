@@ -16,7 +16,7 @@ import {
 import { omit, cloneDeep } from 'lodash'
 
 // material-ui
-import { Toolbar, Box, AppBar, Button, Fab, Modal, List, ListItem, ListItemText, ListItemButton, Typography } from '@mui/material'
+import { Toolbar, Box, AppBar, Button, Fab } from '@mui/material'
 import { useTheme } from '@mui/material/styles'
 
 // project imports
@@ -42,17 +42,7 @@ import useApi from '@/hooks/useApi'
 import useConfirm from '@/hooks/useConfirm'
 
 // icons
-import {
-    IconX,
-    IconRefreshAlert,
-    IconMagnetFilled,
-    IconMagnetOff,
-    IconChevronLeft,
-    IconWand,
-    IconHistory,
-    IconArrowBackUp,
-    IconArrowForwardUp
-} from '@tabler/icons-react'
+import { IconX, IconRefreshAlert, IconMagnetFilled, IconMagnetOff } from '@tabler/icons-react'
 
 // utils
 import {
@@ -69,8 +59,6 @@ import { usePrompt } from '@/utils/usePrompt'
 // const
 import { FLOWISE_CREDENTIAL_ID, AGENTFLOW_ICONS } from '@/store/constant'
 import PropTypes from 'prop-types'
-import AgentflowGeneratorPanel from './AgentflowGeneratorPanel'
-import dayjs from 'dayjs'
 
 const nodeTypes = { agentFlow: CanvasNode, stickyNote: StickyNote, iteration: IterationNode }
 const edgeTypes = { agentFlow: AgentFlowEdge }
@@ -100,70 +88,6 @@ const AgentflowCanvas = ({ chatflowId: propChatflowId }) => {
     const [canvasDataStore, setCanvasDataStore] = useState(canvas)
     const [chatflow, setChatflow] = useState(null)
     const { reactFlowInstance, setReactFlowInstance } = useContext(flowContext)
-
-    const [history, setHistory] = useState([])
-    const [historyIndex, setHistoryIndex] = useState(0)
-
-    // Helper to push to history
-    const pushHistory = (newNodes, newEdges, label = 'Canvas updated') => {
-        setHistory((prev) => {
-            const truncated = prev.slice(0, historyIndex + 1)
-            return [
-                ...truncated,
-                {
-                    nodes: newNodes,
-                    edges: newEdges,
-                    timestamp: dayjs().format('YYYY-MM-DD HH:mm:ss'),
-                    label
-                }
-            ]
-        })
-        setHistoryIndex((idx) => idx + 1)
-    }
-
-    // Wrap setNodes and setEdges to also push to history
-    const setNodesWithHistory = (newNodes, label) => {
-        setNodes(newNodes)
-        pushHistory(newNodes, edges, label)
-    }
-    const setEdgesWithHistory = (newEdges, label) => {
-        setEdges(newEdges)
-        pushHistory(nodes, newEdges, label)
-    }
-
-    // Undo/redo handlers
-    const undo = () => {
-        if (historyIndex > 0) {
-            const prev = history[historyIndex - 1]
-            setNodes(prev.nodes)
-            setEdges(prev.edges)
-            setHistoryIndex(historyIndex - 1)
-        }
-    }
-    const redo = () => {
-        if (historyIndex < history.length - 1) {
-            const next = history[historyIndex + 1]
-            setNodes(next.nodes)
-            setEdges(next.edges)
-            setHistoryIndex(historyIndex + 1)
-        }
-    }
-
-    // Keyboard shortcuts for undo/redo
-    useEffect(() => {
-        const handleKeyDown = (e) => {
-            if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
-                e.preventDefault()
-                undo()
-            } else if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) {
-                e.preventDefault()
-                redo()
-            }
-        }
-        window.addEventListener('keydown', handleKeyDown)
-        return () => window.removeEventListener('keydown', handleKeyDown)
-        // eslint-disable-next-line
-    }, [historyIndex, history])
 
     // ==============================|| Snackbar ||============================== //
 
@@ -233,7 +157,7 @@ const AgentflowCanvas = ({ chatflowId: propChatflowId }) => {
             type: 'agentFlow',
             id: `${params.source}-${params.sourceHandle}-${params.target}-${params.targetHandle}`
         }
-        setEdgesWithHistory(addEdge(newEdge, edges), 'Added edge')
+        setEdges((eds) => addEdge(newEdge, eds))
     }
 
     const handleLoadFlow = (file) => {
@@ -241,8 +165,8 @@ const AgentflowCanvas = ({ chatflowId: propChatflowId }) => {
             const flowData = JSON.parse(file)
             const nodes = flowData.nodes || []
 
-            setNodesWithHistory(nodes, 'Loaded flow')
-            setEdgesWithHistory(flowData.edges || [], 'Loaded flow')
+            setNodes(nodes)
+            setEdges(flowData.edges || [])
             setTimeout(() => setDirty(), 0)
         } catch (e) {
             console.error(e)
@@ -323,8 +247,8 @@ const AgentflowCanvas = ({ chatflowId: propChatflowId }) => {
     // eslint-disable-next-line
     const onNodeClick = useCallback((event, clickedNode) => {
         setSelectedNode(clickedNode)
-        setNodesWithHistory(
-            nodes.map((node) => {
+        setNodes((nds) =>
+            nds.map((node) => {
                 if (node.id === clickedNode.id) {
                     node.data = {
                         ...node.data,
@@ -338,8 +262,7 @@ const AgentflowCanvas = ({ chatflowId: propChatflowId }) => {
                 }
 
                 return node
-            }),
-            'Node clicked'
+            })
         )
     })
 
@@ -487,8 +410,8 @@ const AgentflowCanvas = ({ chatflowId: propChatflowId }) => {
             }
 
             setSelectedNode(newNode)
-            setNodesWithHistory(
-                nodes.concat(newNode).map((node) => {
+            setNodes((nds) => {
+                return (nds ?? []).concat(newNode).map((node) => {
                     if (node.id === newNode.id) {
                         node.data = {
                             ...node.data,
@@ -502,9 +425,8 @@ const AgentflowCanvas = ({ chatflowId: propChatflowId }) => {
                     }
 
                     return node
-                }),
-                'Node dropped'
-            )
+                })
+            })
             setTimeout(() => setDirty(), 0)
         },
 
@@ -529,11 +451,8 @@ const AgentflowCanvas = ({ chatflowId: propChatflowId }) => {
             }
         }
 
-        setNodesWithHistory(cloneNodes, 'Synced nodes')
-        setEdgesWithHistory(
-            cloneEdges.filter((edge) => !toBeRemovedEdges.includes(edge)),
-            'Synced nodes'
-        )
+        setNodes(cloneNodes)
+        setEdges(cloneEdges.filter((edge) => !toBeRemovedEdges.includes(edge)))
         setDirty()
         setIsSyncNodesButtonEnabled(false)
     }
@@ -612,8 +531,8 @@ const AgentflowCanvas = ({ chatflowId: propChatflowId }) => {
         if (getSpecificChatflowApi.data) {
             const chatflow = getSpecificChatflowApi.data
             const initialFlow = chatflow.flowData ? JSON.parse(chatflow.flowData) : []
-            setNodesWithHistory(initialFlow.nodes || [], 'Loaded flow')
-            setEdgesWithHistory(initialFlow.edges || [], 'Loaded flow')
+            setNodes(initialFlow.nodes || [])
+            setEdges(initialFlow.edges || [])
             dispatch({ type: SET_CHATFLOW, chatflow })
         } else if (getSpecificChatflowApi.error) {
             errorFailed(`Failed to retrieve ${canvasTitle}: ${getSpecificChatflowApi.error.response.data.message}`)
@@ -668,8 +587,8 @@ const AgentflowCanvas = ({ chatflowId: propChatflowId }) => {
                 handleLoadFlow(localStorage.getItem('duplicatedFlowData'))
                 setTimeout(() => localStorage.removeItem('duplicatedFlowData'), 0)
             } else {
-                setNodesWithHistory([], 'Initial state')
-                setEdgesWithHistory([], 'Initial state')
+                setNodes([])
+                setEdges([])
             }
             dispatch({
                 type: SET_CHATFLOW,
@@ -738,34 +657,13 @@ const AgentflowCanvas = ({ chatflowId: propChatflowId }) => {
                         label: 'Start'
                     }
                 }
-                setNodesWithHistory([startNode], 'Initial state')
-                setEdgesWithHistory([], 'Initial state')
+                setNodes([startNode])
+                setEdges([])
             }
         }
 
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [getNodesApi.data, chatflowId])
-
-    const [isPanelOpen, setPanelOpen] = useState(true)
-    const [historyModalOpen, setHistoryModalOpen] = useState(false)
-
-    // Handler for CanvasHeader
-    const handleOpenHistoryModal = () => setHistoryModalOpen(true)
-    const handleCloseHistoryModal = () => setHistoryModalOpen(false)
-
-    // Initialize history on mount
-    useEffect(() => {
-        setHistory([
-            {
-                nodes: nodes,
-                edges: edges,
-                timestamp: dayjs().format('YYYY-MM-DD HH:mm:ss'),
-                label: 'Initial state'
-            }
-        ])
-        setHistoryIndex(0)
-        // eslint-disable-next-line
-    }, [])
 
     return (
         <>
@@ -784,198 +682,120 @@ const AgentflowCanvas = ({ chatflowId: propChatflowId }) => {
                 }}
             />
 
-            <Box sx={{ display: 'flex', height: '100%' }}>
-                <AgentflowGeneratorPanel open={isPanelOpen} onClose={() => setPanelOpen(false)} />
-                <Box sx={{ flex: 1, position: 'relative' }}>
-                    <AppBar
-                        enableColorOnDark
-                        position='fixed'
-                        color='inherit'
-                        elevation={1}
-                        sx={{
-                            bgcolor: theme.palette.background.default
-                        }}
-                    >
-                        <Toolbar>
-                            <CanvasHeader
-                                chatflow={chatflow}
-                                handleSaveFlow={handleSaveFlow}
-                                handleDeleteFlow={handleDeleteFlow}
-                                handleLoadFlow={handleLoadFlow}
-                                isAgentCanvas={true}
-                                isAgentflowV2={true}
-                                onOpenHistoryModal={handleOpenHistoryModal}
-                            />
-                        </Toolbar>
-                    </AppBar>
-                    <Box sx={{ pt: '70px', height: '100vh', width: '100%' }}>
-                        <div className='reactflow-parent-wrapper'>
-                            <div className='reactflow-wrapper' ref={reactFlowWrapper}>
-                                <ReactFlow
-                                    nodes={nodes}
-                                    edges={edges}
-                                    onNodesChange={onNodesChange}
-                                    onNodeClick={onNodeClick}
-                                    onNodeDoubleClick={onNodeDoubleClick}
-                                    onEdgesChange={onEdgesChange}
-                                    onDrop={onDrop}
-                                    onDragOver={onDragOver}
-                                    onNodeDragStop={setDirty}
-                                    nodeTypes={nodeTypes}
-                                    edgeTypes={edgeTypes}
-                                    onConnect={onConnect}
-                                    onInit={setReactFlowInstance}
-                                    fitView
-                                    deleteKeyCode={canvas.canvasDialogShow ? null : ['Delete']}
-                                    minZoom={0.5}
-                                    snapGrid={[25, 25]}
-                                    snapToGrid={isSnappingEnabled}
-                                    connectionLineComponent={ConnectionLine}
-                                >
-                                    <Controls
-                                        className={customization.isDarkMode ? 'dark-mode-controls' : ''}
-                                        style={{
-                                            display: 'flex',
-                                            flexDirection: 'row',
-                                            left: '50%',
-                                            transform: 'translate(-50%, -50%)'
-                                        }}
-                                    >
-                                        <button
-                                            className='react-flow__controls-button react-flow__controls-interactive'
-                                            onClick={() => {
-                                                setIsSnappingEnabled(!isSnappingEnabled)
-                                            }}
-                                            title='toggle snapping'
-                                            aria-label='toggle snapping'
-                                        >
-                                            {isSnappingEnabled ? <IconMagnetFilled /> : <IconMagnetOff />}
-                                        </button>
-                                    </Controls>
-                                    <MiniMap
-                                        nodeStrokeWidth={3}
-                                        nodeColor={customization.isDarkMode ? '#2d2d2d' : '#e2e2e2'}
-                                        nodeStrokeColor={customization.isDarkMode ? '#525252' : '#fff'}
-                                        maskColor={customization.isDarkMode ? 'rgb(45, 45, 45, 0.6)' : 'rgb(240, 240, 240, 0.6)'}
-                                        style={{
-                                            backgroundColor: customization.isDarkMode ? theme.palette.background.default : '#fff'
-                                        }}
-                                    />
-                                    <Background color='#aaa' gap={16} />
-                                    <AddNodes
-                                        isAgentCanvas={true}
-                                        isAgentflowv2={true}
-                                        nodesData={getNodesApi.data}
-                                        node={selectedNode}
-                                        onFlowGenerated={triggerConfetti}
-                                    />
-                                    <EditNodeDialog
-                                        show={editNodeDialogOpen}
-                                        dialogProps={editNodeDialogProps}
-                                        onCancel={() => setEditNodeDialogOpen(false)}
-                                    />
-                                    {isSyncNodesButtonEnabled && (
-                                        <Fab
-                                            sx={{
-                                                left: 60,
-                                                top: 20,
-                                                color: 'white',
-                                                background: 'orange',
-                                                '&:hover': {
-                                                    background: 'orange',
-                                                    backgroundImage: `linear-gradient(rgb(0 0 0/10%) 0 0)`
-                                                }
-                                            }}
-                                            size='small'
-                                            aria-label='sync'
-                                            title='Sync Nodes'
-                                            onClick={() => syncNodes()}
-                                        >
-                                            <IconRefreshAlert />
-                                        </Fab>
-                                    )}
-                                    <ChatPopUp isAgentCanvas={true} chatflowid={chatflowId} onOpenChange={setChatPopupOpen} />
-                                    {!chatPopupOpen && <ValidationPopUp isAgentCanvas={true} chatflowid={chatflowId} />}
-                                </ReactFlow>
-                            </div>
-                        </div>
-                    </Box>
-                    <ConfirmDialog />
-                </Box>
-                {/* Show floating button when panel is collapsed */}
-                {!isPanelOpen && (
-                    <Fab
-                        color='primary'
-                        aria-label='open-generator-panel'
-                        onClick={() => setPanelOpen(true)}
-                        sx={{
-                            position: 'fixed',
-                            bottom: 32,
-                            right: 32,
-                            zIndex: 1300,
-                            boxShadow: 3
-                        }}
-                    >
-                        <IconWand />
-                    </Fab>
-                )}
-                <Modal open={historyModalOpen} onClose={handleCloseHistoryModal}>
-                    <Box
-                        sx={{
-                            position: 'absolute',
-                            top: '50%',
-                            left: '50%',
-                            transform: 'translate(-50%, -50%)',
-                            width: 400,
-                            bgcolor: 'background.paper',
-                            boxShadow: 24,
-                            p: 3,
-                            borderRadius: 2,
-                            maxHeight: 500,
-                            overflowY: 'auto'
-                        }}
-                    >
-                        <Typography variant='h6' sx={{ mb: 2, display: 'flex', alignItems: 'center' }}>
-                            <IconHistory style={{ marginRight: 8 }} /> History
-                        </Typography>
-                        <Box sx={{ display: 'flex', gap: 1, mb: 2 }}>
-                            <Button variant='outlined' startIcon={<IconArrowBackUp />} onClick={undo} disabled={historyIndex === 0}>
-                                Undo
-                            </Button>
-                            <Button
-                                variant='outlined'
-                                startIcon={<IconArrowForwardUp />}
-                                onClick={redo}
-                                disabled={historyIndex === history.length - 1}
+            <Box>
+                <AppBar
+                    enableColorOnDark
+                    position='fixed'
+                    color='inherit'
+                    elevation={1}
+                    sx={{
+                        bgcolor: theme.palette.background.default
+                    }}
+                >
+                    <Toolbar>
+                        <CanvasHeader
+                            chatflow={chatflow}
+                            handleSaveFlow={handleSaveFlow}
+                            handleDeleteFlow={handleDeleteFlow}
+                            handleLoadFlow={handleLoadFlow}
+                            isAgentCanvas={true}
+                            isAgentflowV2={true}
+                        />
+                    </Toolbar>
+                </AppBar>
+                <Box sx={{ pt: '70px', height: '100vh', width: '100%' }}>
+                    <div className='reactflow-parent-wrapper'>
+                        <div className='reactflow-wrapper' ref={reactFlowWrapper}>
+                            <ReactFlow
+                                nodes={nodes}
+                                edges={edges}
+                                onNodesChange={onNodesChange}
+                                onNodeClick={onNodeClick}
+                                onNodeDoubleClick={onNodeDoubleClick}
+                                onEdgesChange={onEdgesChange}
+                                onDrop={onDrop}
+                                onDragOver={onDragOver}
+                                onNodeDragStop={setDirty}
+                                nodeTypes={nodeTypes}
+                                edgeTypes={edgeTypes}
+                                onConnect={onConnect}
+                                onInit={setReactFlowInstance}
+                                fitView
+                                deleteKeyCode={canvas.canvasDialogShow ? null : ['Delete']}
+                                minZoom={0.5}
+                                snapGrid={[25, 25]}
+                                snapToGrid={isSnappingEnabled}
+                                connectionLineComponent={ConnectionLine}
                             >
-                                Redo
-                            </Button>
-                        </Box>
-                        <List dense>
-                            {history.map((entry, idx) => (
-                                <ListItem key={idx} disablePadding>
-                                    <ListItemButton
-                                        selected={idx === historyIndex}
+                                <Controls
+                                    className={customization.isDarkMode ? 'dark-mode-controls' : ''}
+                                    style={{
+                                        display: 'flex',
+                                        flexDirection: 'row',
+                                        left: '50%',
+                                        transform: 'translate(-50%, -50%)'
+                                    }}
+                                >
+                                    <button
+                                        className='react-flow__controls-button react-flow__controls-interactive'
                                         onClick={() => {
-                                            setNodes(entry.nodes)
-                                            setEdges(entry.edges)
-                                            setHistoryIndex(idx)
+                                            setIsSnappingEnabled(!isSnappingEnabled)
                                         }}
+                                        title='toggle snapping'
+                                        aria-label='toggle snapping'
                                     >
-                                        <ListItemText
-                                            primary={entry.label}
-                                            secondary={entry.timestamp}
-                                            primaryTypographyProps={{ fontWeight: idx === historyIndex ? 700 : 400 }}
-                                        />
-                                    </ListItemButton>
-                                </ListItem>
-                            ))}
-                        </List>
-                        <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 2 }}>
-                            <Button onClick={handleCloseHistoryModal}>Close</Button>
-                        </Box>
-                    </Box>
-                </Modal>
+                                        {isSnappingEnabled ? <IconMagnetFilled /> : <IconMagnetOff />}
+                                    </button>
+                                </Controls>
+                                <MiniMap
+                                    nodeStrokeWidth={3}
+                                    nodeColor={customization.isDarkMode ? '#2d2d2d' : '#e2e2e2'}
+                                    nodeStrokeColor={customization.isDarkMode ? '#525252' : '#fff'}
+                                    maskColor={customization.isDarkMode ? 'rgb(45, 45, 45, 0.6)' : 'rgb(240, 240, 240, 0.6)'}
+                                    style={{
+                                        backgroundColor: customization.isDarkMode ? theme.palette.background.default : '#fff'
+                                    }}
+                                />
+                                <Background color='#aaa' gap={16} />
+                                <AddNodes
+                                    isAgentCanvas={true}
+                                    isAgentflowv2={true}
+                                    nodesData={getNodesApi.data}
+                                    node={selectedNode}
+                                    onFlowGenerated={triggerConfetti}
+                                />
+                                <EditNodeDialog
+                                    show={editNodeDialogOpen}
+                                    dialogProps={editNodeDialogProps}
+                                    onCancel={() => setEditNodeDialogOpen(false)}
+                                />
+                                {isSyncNodesButtonEnabled && (
+                                    <Fab
+                                        sx={{
+                                            left: 60,
+                                            top: 20,
+                                            color: 'white',
+                                            background: 'orange',
+                                            '&:hover': {
+                                                background: 'orange',
+                                                backgroundImage: `linear-gradient(rgb(0 0 0/10%) 0 0)`
+                                            }
+                                        }}
+                                        size='small'
+                                        aria-label='sync'
+                                        title='Sync Nodes'
+                                        onClick={() => syncNodes()}
+                                    >
+                                        <IconRefreshAlert />
+                                    </Fab>
+                                )}
+                                <ChatPopUp isAgentCanvas={true} chatflowid={chatflowId} onOpenChange={setChatPopupOpen} />
+                                {!chatPopupOpen && <ValidationPopUp isAgentCanvas={true} chatflowid={chatflowId} />}
+                            </ReactFlow>
+                        </div>
+                    </div>
+                </Box>
+                <ConfirmDialog />
             </Box>
         </>
     )

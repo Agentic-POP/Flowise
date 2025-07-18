@@ -6,10 +6,13 @@ import path from 'path'
 import * as fs from 'fs'
 import { generateAgentflowv2 as generateAgentflowv2_json } from 'flowise-components'
 import { z } from 'zod'
-import { sysPrompt } from './prompt'
+import { sysPrompt, cursorPrompt } from './prompt'
 import { databaseEntities } from '../../utils'
 import logger from '../../utils/logger'
 import { MODE } from '../../Interface'
+import { FlowAnalyzer } from './flowAnalyzer'
+import { IntentParser } from './intentParser'
+import { SmartModifier, FlowState } from './smartModifier'
 
 // Define the Zod schema for Agentflowv2 data structure
 const NodeType = z.object({
@@ -181,69 +184,138 @@ const getAllAgentflowv2Marketplaces = async () => {
     return formattedTemplates
 }
 
-const generateAgentflowv2 = async (question: string, selectedChatModel: Record<string, any>) => {
+interface FlowModificationRequest {
+    question: string
+    selectedChatModel: Record<string, any>
+    currentNodes?: any[]
+    currentEdges?: any[]
+    selectedNodeIds?: string[]
+    modificationType?: 'add' | 'modify' | 'cursor'
+    cursorMode?: boolean
+}
+
+const generateAgentflowv2 = async (
+    question: string,
+    selectedChatModel: Record<string, any>,
+    currentFlow?: FlowState,
+    cursorMode: boolean = false
+) => {
     try {
         const agentFlow2Nodes = await getAllAgentFlow2Nodes()
         const toolNodes = await getAllToolNodes()
         const marketplaceTemplates = await getAllAgentflowv2Marketplaces()
 
-        const prompt = sysPrompt
-            .replace('{agentFlow2Nodes}', agentFlow2Nodes)
-            .replace('{marketplaceTemplates}', marketplaceTemplates)
-            .replace('{userRequest}', question)
-        const options: Record<string, any> = {
-            appDataSource: getRunningExpressApp().AppDataSource,
-            databaseEntities: databaseEntities,
-            logger: logger
-        }
+        if (cursorMode && currentFlow) {
+            // --- LLM-powered cursor mode ---
+            const prompt = cursorPrompt
+                .replace('{currentFlowState}', JSON.stringify(currentFlow, null, 2))
+                .replace('{userRequest}', question)
+                .replace('{availableNodes}', agentFlow2Nodes)
+                .replace('{marketplaceTemplates}', marketplaceTemplates)
+                .replace('{flowAnalysis}', '') // Optionally add flow analysis
 
-        let response
+            const options: Record<string, any> = {
+                appDataSource: getRunningExpressApp().AppDataSource,
+                databaseEntities: databaseEntities,
+                logger: logger
+            }
 
-        if (process.env.MODE === MODE.QUEUE) {
-            const predictionQueue = getRunningExpressApp().queueManager.getQueue('prediction')
-            const job = await predictionQueue.addJob({
-                prompt,
-                question,
-                toolNodes,
-                selectedChatModel,
-                isAgentFlowGenerator: true
-            })
-            logger.debug(`[server]: Generated Agentflowv2 Job added to queue: ${job.id}`)
-            const queueEvents = predictionQueue.getQueueEvents()
-            response = await job.waitUntilFinished(queueEvents)
+            let response
+            if (process.env.MODE === MODE.QUEUE) {
+                const predictionQueue = getRunningExpressApp().queueManager.getQueue('prediction')
+                const job = await predictionQueue.addJob({
+                    prompt,
+                    question,
+                    toolNodes,
+                    selectedChatModel,
+                    isAgentFlowGenerator: true
+                })
+                logger.debug(`[server]: Generated Agentflowv2 (cursor) Job added to queue: ${job.id}`)
+                const queueEvents = predictionQueue.getQueueEvents()
+                response = await job.waitUntilFinished(queueEvents)
+            } else {
+                response = await generateAgentflowv2_json(
+                    { prompt, componentNodes: getRunningExpressApp().nodesPool.componentNodes, toolNodes, selectedChatModel },
+                    question,
+                    options
+                )
+            }
+
+            // --- Parse LLM response for modifications ---
+            try {
+                if (typeof response === 'string') {
+                    const parsed = JSON.parse(response)
+                    return parsed
+                } else if (typeof response === 'object') {
+                    return response
+                } else {
+                    throw new Error(`Unexpected response type: ${typeof response}`)
+                }
+            } catch (parseError) {
+                logger.error('Failed to parse or validate LLM response:', parseError)
+                return {
+                    error: 'Failed to validate LLM response format',
+                    rawResponse: response
+                } as any
+            }
         } else {
-            response = await generateAgentflowv2_json(
-                { prompt, componentNodes: getRunningExpressApp().nodesPool.componentNodes, toolNodes, selectedChatModel },
-                question,
-                options
-            )
-        }
-
-        try {
-            // Try to parse and validate the response if it's a string
-            if (typeof response === 'string') {
-                const parsedResponse = JSON.parse(response)
-                const validatedResponse = AgentFlowV2Type.parse(parsedResponse)
-                return validatedResponse
+            // ...existing generation mode...
+            logger.info('[server]: Running in generation mode for new flow')
+            logger.info('[server]: Generation mode INPUT:', JSON.stringify({ question, selectedChatModel }, null, 2))
+            const prompt = sysPrompt
+                .replace('{agentFlow2Nodes}', agentFlow2Nodes)
+                .replace('{marketplaceTemplates}', marketplaceTemplates)
+                .replace('{userRequest}', question)
+            const options: Record<string, any> = {
+                appDataSource: getRunningExpressApp().AppDataSource,
+                databaseEntities: databaseEntities,
+                logger: logger
             }
-            // If response is already an object
-            else if (typeof response === 'object') {
-                const validatedResponse = AgentFlowV2Type.parse(response)
-                return validatedResponse
+            let response
+            if (process.env.MODE === MODE.QUEUE) {
+                const predictionQueue = getRunningExpressApp().queueManager.getQueue('prediction')
+                const job = await predictionQueue.addJob({
+                    prompt,
+                    question,
+                    toolNodes,
+                    selectedChatModel,
+                    isAgentFlowGenerator: true
+                })
+                logger.debug(`[server]: Generated Agentflowv2 Job added to queue: ${job.id}`)
+                const queueEvents = predictionQueue.getQueueEvents()
+                response = await job.waitUntilFinished(queueEvents)
+            } else {
+                response = await generateAgentflowv2_json(
+                    { prompt, componentNodes: getRunningExpressApp().nodesPool.componentNodes, toolNodes, selectedChatModel },
+                    question,
+                    options
+                )
             }
-            // Unexpected response type
-            else {
-                throw new Error(`Unexpected response type: ${typeof response}`)
+            try {
+                if (typeof response === 'string') {
+                    const parsedResponse = JSON.parse(response)
+                    const validatedResponse = AgentFlowV2Type.parse(parsedResponse)
+                    logger.info('[server]: Generation mode OUTPUT:', JSON.stringify(validatedResponse, null, 2))
+                    return validatedResponse
+                } else if (typeof response === 'object') {
+                    const validatedResponse = AgentFlowV2Type.parse(response)
+                    logger.info('[server]: Generation mode OUTPUT:', JSON.stringify(validatedResponse, null, 2))
+                    return validatedResponse
+                } else {
+                    throw new Error(`Unexpected response type: ${typeof response}`)
+                }
+            } catch (parseError) {
+                logger.error('Failed to parse or validate response:', parseError)
+                logger.error('[server]: Generation mode ERROR INPUT:', JSON.stringify({ question, selectedChatModel }, null, 2))
+                logger.error('[server]: Generation mode ERROR OUTPUT:', response)
+                return {
+                    error: 'Failed to validate response format',
+                    rawResponse: response
+                } as any
             }
-        } catch (parseError) {
-            console.error('Failed to parse or validate response:', parseError)
-            // If parsing fails, return an error object
-            return {
-                error: 'Failed to validate response format',
-                rawResponse: response
-            } as any // Type assertion to avoid type errors
         }
     } catch (error) {
+        logger.error('[server]: FATAL ERROR:', error)
         throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, `Error: generateAgentflowv2 - ${getErrorMessage(error)}`)
     }
 }

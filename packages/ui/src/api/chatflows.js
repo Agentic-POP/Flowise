@@ -24,6 +24,10 @@ const getHasChatflowChanged = (id, lastUpdatedDateTime) => client.get(`/chatflow
 
 const generateAgentflow = (body) => client.post(`/agentflowv2-generator/generate`, body)
 
+const generateAgentflowCursor = (body) => client.post(`/agentflowv2-generator/generate`, { ...body, cursorMode: true })
+
+const getFlowSuggestions = (currentFlow) => client.post(`/agentflowv2-generator/suggestions`, currentFlow)
+
 export default {
     getAllChatflows,
     getAllAgentflows,
@@ -36,5 +40,7 @@ export default {
     getIsChatflowStreaming,
     getAllowChatflowUploads,
     getHasChatflowChanged,
-    generateAgentflow
+    generateAgentflow,
+    generateAgentflowCursor,
+    getFlowSuggestions
 }

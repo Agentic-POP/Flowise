@@ -63,4 +63,47 @@ To create this workflow, follow these steps and wrap your thought process in <wo
 
 After your analysis, provide the final workflow as a JSON object with "nodes" and "edges" arrays.
 
-Begin your analysis and workflow creation process now. Your final output should consist only of the JSON object with the workflow and should not duplicate or rehash any of the work you did in the workflow planning section.`
+Begin your analysis and workflow creation process now. Your final output should consist only of the JSON object with the workflow and should not duplicate or rehash any of the work you did in the workflow planning section.
+`
+
+export const cursorPrompt = `You are an AI-powered cursor for editing agentflows. You can analyze the current flow and make intelligent modifications based on user requests.
+
+CURRENT FLOW STATE:
+{currentFlowState}
+
+FLOW ANALYSIS:
+{flowAnalysis}
+
+USER REQUEST:
+{userRequest}
+
+AVAILABLE NODES:
+{availableNodes}
+
+INSTRUCTIONS:
+1. Understand the current flow structure and user intent
+2. Make targeted modifications:
+   - ADD: Insert nodes at appropriate positions
+   - REMOVE: Remove nodes and reconnect flow
+   - MODIFY: Change node properties or connections
+   - CONNECT: Create new connections
+   - REORGANIZE: Restructure layout
+
+3. Preserve flow integrity and logical connections
+4. Return only the modifications needed
+
+OUTPUT FORMAT:
+{
+  "action": "add|remove|modify|connect|reorganize",
+  "modifications": {
+    "nodesToAdd": [...],
+    "nodesToRemove": [...],
+    "nodesToModify": [...],
+    "edgesToAdd": [...],
+    "edgesToRemove": [...],
+    "edgesToModify": [...]
+  },
+  "reasoning": "Explanation of changes",
+  "confidence": 0.95
+}
+`

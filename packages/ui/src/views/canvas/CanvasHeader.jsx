@@ -8,7 +8,7 @@ import { useTheme } from '@mui/material/styles'
 import { Avatar, Box, ButtonBase, Typography, Stack, TextField, Button } from '@mui/material'
 
 // icons
-import { IconSettings, IconChevronLeft, IconDeviceFloppy, IconPencil, IconCheck, IconX, IconCode } from '@tabler/icons-react'
+import { IconSettings, IconChevronLeft, IconDeviceFloppy, IconPencil, IconCheck, IconX, IconCode, IconHistory } from '@tabler/icons-react'
 
 // project imports
 import Settings from '@/views/settings'
@@ -34,7 +34,7 @@ import { closeSnackbar as closeSnackbarAction, enqueueSnackbar as enqueueSnackba
 
 // ==============================|| CANVAS HEADER ||============================== //
 
-const CanvasHeader = ({ chatflow, isAgentCanvas, isAgentflowV2, handleSaveFlow, handleDeleteFlow, handleLoadFlow }) => {
+const CanvasHeader = ({ chatflow, isAgentCanvas, isAgentflowV2, handleSaveFlow, handleDeleteFlow, handleLoadFlow, onOpenHistoryModal }) => {
     const theme = useTheme()
     const dispatch = useDispatch()
     const navigate = useNavigate()
@@ -276,6 +276,28 @@ const CanvasHeader = ({ chatflow, isAgentCanvas, isAgentflowV2, handleSaveFlow, 
                                 }}
                             >
                                 <IconChevronLeft stroke={1.5} size='1.3rem' />
+                            </Avatar>
+                        </ButtonBase>
+                    </Box>
+                    {/* History icon to the left of save */}
+                    <Box>
+                        <ButtonBase title='History' sx={{ borderRadius: '50%', ml: 1 }} onClick={onOpenHistoryModal}>
+                            <Avatar
+                                variant='rounded'
+                                sx={{
+                                    ...theme.typography.commonAvatar,
+                                    ...theme.typography.mediumAvatar,
+                                    transition: 'all .2s ease-in-out',
+                                    background: theme.palette.secondary.light,
+                                    color: theme.palette.secondary.dark,
+                                    '&:hover': {
+                                        background: theme.palette.secondary.dark,
+                                        color: theme.palette.secondary.light
+                                    }
+                                }}
+                                color='inherit'
+                            >
+                                <IconHistory stroke={1.5} size='1.3rem' />
                             </Avatar>
                         </ButtonBase>
                     </Box>

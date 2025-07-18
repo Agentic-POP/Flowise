@@ -1,0 +1,46 @@
+{
+    "question": "Add a web search node after the LLM node",
+    "selectedChatModel": { "name": "llmAgentflow", "label": "LLM" },
+    "currentFlow": {
+        "nodes": [
+            {
+                "id": "node_1",
+                "type": "startAgentflow",
+                "position": { "x": 100, "y": 100 },
+                "positionAbsolute": { "x": 100, "y": 100 },
+                "z": 0,
+                "handleBounds": { "source": [], "target": [] },
+                "width": 200,
+                "height": 100,
+                "selected": false,
+                "dragging": false,
+                "data": { "label": "Start", "type": "startAgentflow" }
+            },
+            {
+                "id": "node_2",
+                "type": "llmAgentflow",
+                "position": { "x": 400, "y": 100 },
+                "positionAbsolute": { "x": 400, "y": 100 },
+                "z": 0,
+                "handleBounds": { "source": [], "target": [] },
+                "width": 200,
+                "height": 100,
+                "selected": false,
+                "dragging": false,
+                "data": { "label": "LLM", "type": "llmAgentflow" }
+            }
+        ],
+        "edges": [
+            {
+                "id": "edge_1",
+                "source": "node_1",
+                "sourceHandle": "output",
+                "target": "node_2",
+                "targetHandle": "input",
+                "type": "agentFlow",
+                "data": { "label": "" }
+            }
+        ]
+    },
+    "cursorMode": true
+}

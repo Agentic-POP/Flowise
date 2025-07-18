@@ -75,6 +75,11 @@ export class App {
 
     constructor() {
         this.app = express()
+        // Global logger at the very top
+        this.app.use((req, res, next) => {
+            console.log('GLOBAL REQUEST', req.method, req.path, req.body)
+            next()
+        })
     }
 
     async initDatabase() {
