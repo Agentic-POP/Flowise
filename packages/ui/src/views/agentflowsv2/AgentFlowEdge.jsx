@@ -38,13 +38,18 @@ const foreignObjectSize = 40
 
 const AgentFlowEdge = ({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data, markerEnd, selected }) => {
     const [isHovered, setIsHovered] = useState(false)
-    const { deleteEdge } = useContext(flowContext)
+    const { deleteEdge, onEdgeDelete } = useContext(flowContext)
     const dispatch = useDispatch()
 
     const onEdgeClick = (evt, id) => {
         evt.stopPropagation()
-        deleteEdge(id)
-        dispatch({ type: SET_DIRTY })
+        if (onEdgeDelete) {
+            // Use enhanced history if available
+            onEdgeDelete(id)
+        } else {
+            deleteEdge(id)
+            dispatch({ type: SET_DIRTY })
+        }
     }
 
     const xEqual = sourceX === targetX

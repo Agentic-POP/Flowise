@@ -59,7 +59,7 @@ const AgentFlowNode = ({ data }) => {
     const [position, setPosition] = useState(0)
     const [isHovered, setIsHovered] = useState(false)
     const [warningMessage, setWarningMessage] = useState('')
-    const { deleteNode, duplicateNode } = useContext(flowContext)
+    const { deleteNode, duplicateNode, onNodeDelete, onNodeModify } = useContext(flowContext)
     const [showInfoDialog, setShowInfoDialog] = useState(false)
     const [infoDialogProps, setInfoDialogProps] = useState({})
 
@@ -166,7 +166,15 @@ const AgentFlowNode = ({ data }) => {
                             size={'small'}
                             title='Duplicate'
                             onClick={() => {
-                                duplicateNode(data.id)
+                                if (onNodeModify) {
+                                    // Use enhanced history if available
+                                    const duplicatedNode = duplicateNode(data.id)
+                                    if (duplicatedNode) {
+                                        onNodeModify(duplicatedNode.id, duplicatedNode.data)
+                                    }
+                                } else {
+                                    duplicateNode(data.id)
+                                }
                             }}
                             sx={{
                                 color: customization.isDarkMode ? 'white' : 'inherit',
@@ -182,7 +190,12 @@ const AgentFlowNode = ({ data }) => {
                         size={'small'}
                         title='Delete'
                         onClick={() => {
-                            deleteNode(data.id)
+                            if (onNodeDelete) {
+                                // Use enhanced history if available
+                                onNodeDelete(data.id)
+                            } else {
+                                deleteNode(data.id)
+                            }
                         }}
                         sx={{
                             color: customization.isDarkMode ? 'white' : 'inherit',

@@ -463,6 +463,137 @@ const extractNodesAndEdges = (response: any) => {
     return response
 }
 
+export const processUserMessageWithAI = async (message: string, currentFlow: any, selectedChatModel: any) => {
+    try {
+        // Gather all context
+        const agentFlow2Nodes = await getAllAgentFlow2Nodes()
+        const toolNodes = await getAllToolNodes()
+        const marketplaceTemplates = await getAllAgentflowv2Marketplaces()
+
+        // Build the comprehensive prompt
+        const comprehensivePrompt = `You are an advanced workflow orchestrator designed to generate nodes and edges for complex tasks. Your goal is to create a workflow that accomplishes the given user request efficiently and effectively.
+
+Your task is to generate or modify a workflow for the following user request:
+
+CURRENT WORKFLOW STATE:
+${JSON.stringify(currentFlow, null, 2)}
+
+First, review the available nodes and tools for this system:
+${agentFlow2Nodes}
+
+AVAILABLE TOOLS:
+${toolNodes}
+
+Now, examine these workflow examples to understand how nodes are typically connected and which are most relevant for different tasks:
+${marketplaceTemplates}
+
+here is most recent USER MESSAGE: "${message}"
+
+Based on the user's message and the current flow state, provide an appropriate response in given structure as explained below. user can ask following type of queries:
+1. Answer general questions about current workflows
+2. Suggest modifications to the current workflow
+3. Create a complete new workflow
+4. Provide search results or information
+5. Explain concepts or provide guidance
+6. Combine multiple response types as needed
+7. General conversations like 'what day is it today'
+
+Basis user request, smart generate 3 components 1) context json 2) workflow Json 3) explanation json
+
+1) workflow Json
+To create or update the workflow Json, follow these steps and wrap your thought process in <workflow_planning> tags inside your thinking block:
+1. List out all the key components of the user request.
+2. Analyze the user request and break it down into smaller steps.
+3. For each step, consider which nodes are most appropriate and match each component with potential nodes. Remember:
+   - Always start with a startAgentflow node, if generating workflow from scratch.
+   - Include at least 2 nodes in total, in overall workflow.
+   - Only use nodes from the available nodes list.
+   - Assign each node a unique, incrementing ID.
+4. Outline the overall structure of the workflow.
+5. Determine the logical connections (edges) between the nodes.
+6. if workflow is being edited, then share the complete Json including existing nodes and edges as well, not just the edited nodes. dont change ids of existing nodes. 
+7. Consider special cases:
+   - Use agentAgentflow for multiple autonomous tasks.
+   - Use llmAgentflow for language processing tasks.
+   - Use toolAgentflow for sequential tool execution.
+   - Use iteration node when you need to iterate over a set of data (must include at least one child node with a "parentNode" property).
+   - Use httpAgentflow for API requests or webhooks.
+   - Use conditionAgentAgentflow for dynamic choices or conditionAgentflow for defined conditions.
+   - Use humanInputAgentflow for human input and review.
+   - Use loopAgentflow for repetitive tasks, or when back and forth communication is needed such as hierarchical workflows.
+
+After your analysis, provide the final workflow as a JSON object with "nodes" and "edges" arrays.
+2) Context Json (use name 'context' in json head)- explain your understanding of user request and how are you going to solve it. keep it very concise and to the point. this will be shown to user before Json
+3) Explanation Json (use name 'explanation' in json head)- Summary of what changes were done in workflow and how it will impact or improve existing flow. keep it very concise and to the point. this will be shown to user after Json. 
+
+- If you think you need more information to solve user request more efficiently, then ask it as [context text]. keep questions short and crisp, never more than 2. 
+- If user request is such that it doesn't need all 3 components then send only [context text] with suitable response in text. 
+Begin your analysis and workflow creation process now. Your final output should consist of 3 sections as described above and should not duplicate or rehash any of the work you did in the workflow planning section.
+`
+
+        // Single AI model call with full context
+        const response = await generateAgentflowv2(comprehensivePrompt, selectedChatModel, currentFlow, false)
+
+        // Parse AI response
+        let context = ''
+        let explanation = ''
+        let workflow = { nodes: [], edges: [] }
+        if (typeof response === 'string') {
+            // Try to parse the response as JSON
+            const parsed = JSON.parse(response)
+            context = parsed.context || ''
+            explanation = parsed.explanation || ''
+            if (parsed.workflow && parsed.workflow.nodes && parsed.workflow.edges) {
+                workflow = parsed.workflow
+            } else if (parsed.nodes && parsed.edges) {
+                workflow = { nodes: parsed.nodes, edges: parsed.edges }
+            }
+        } else if (typeof response === 'object') {
+            context = response.context || ''
+            explanation = response.explanation || ''
+            if (response.workflow && response.workflow.nodes && response.workflow.edges) {
+                workflow = response.workflow
+            } else if (response.nodes && response.edges) {
+                workflow = { nodes: response.nodes, edges: response.edges }
+            }
+        } else {
+            throw new Error(`Unexpected response type: ${typeof response}`)
+        }
+
+        // Zod validation for workflow
+        try {
+            AgentFlowV2Type.parse(workflow)
+        } catch (validationError) {
+            logger.error('[AI-PROCESSING]: Invalid workflow structure:', validationError)
+            return {
+                type: 'chat_response',
+                content: 'The AI response did not contain a valid workflow structure. Please try again.',
+                timestamp: new Date().toISOString(),
+                error: (validationError as Error).message
+            }
+        }
+
+        // Add timestamp and validate response
+        const finalResponse = {
+            context,
+            ...workflow,
+            explanation,
+            timestamp: new Date().toISOString(),
+            sessionId: Date.now().toString()
+        }
+
+        return finalResponse
+    } catch (error) {
+        logger.error('[AI-PROCESSING]: Error processing user message:', error)
+        return {
+            type: 'chat_response',
+            content: `I encountered an issue processing your request: "${message}". Please try rephrasing or provide more context about what you'd like to accomplish.`,
+            timestamp: new Date().toISOString(),
+            error: (error as Error).message
+        }
+    }
+}
+
 export default {
     generateAgentflowv2
 }

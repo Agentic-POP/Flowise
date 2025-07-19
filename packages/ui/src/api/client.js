@@ -8,14 +8,40 @@ const apiClient = axios.create({
         'Content-type': 'application/json',
         'x-request-from': 'internal'
     },
-    withCredentials: true
+    withCredentials: true,
+    timeout: 10000 // 10 second timeout
 })
+
+// Request interceptor to handle base URL issues
+apiClient.interceptors.request.use(
+    function (config) {
+        // Ensure baseURL is set
+        if (!config.baseURL) {
+            config.baseURL = `${baseURL}/api/v1`
+        }
+        return config
+    },
+    function (error) {
+        return Promise.reject(error)
+    }
+)
 
 apiClient.interceptors.response.use(
     function (response) {
         return response
     },
     async (error) => {
+        // Handle network errors or missing response
+        if (!error.response) {
+            console.error('Network error or server not available:', error.message)
+            return Promise.reject({
+                response: {
+                    status: 0,
+                    data: { message: 'Network error or server not available' }
+                }
+            })
+        }
+
         if (error.response.status === 401) {
             // check if refresh is needed
             if (error.response.data.message === ErrorMessage.TOKEN_EXPIRED && error.response.data.retry === true) {

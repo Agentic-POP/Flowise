@@ -1,19 +1,24 @@
 import { useState, useEffect, useContext } from 'react'
 import { useDispatch, useSelector } from 'react-redux'
 import PropTypes from 'prop-types'
-import { Box, Typography, OutlinedInput, Button, Drawer, IconButton, Modal, Paper, Card } from '@mui/material'
+import {
+    Box,
+    Typography,
+    OutlinedInput,
+    Button,
+    Drawer,
+    IconButton,
+    Modal,
+    Paper,
+    Card,
+    Accordion,
+    AccordionSummary,
+    AccordionDetails
+} from '@mui/material'
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
 import chatflowsApi from '@/api/chatflows'
 import { closeSnackbar as closeSnackbarAction, enqueueSnackbar as enqueueSnackbarAction } from '@/store/actions'
-import {
-    IconX,
-    IconChevronRight,
-    IconAdjustments,
-    IconMessage,
-    IconWand,
-    IconPlus,
-    IconPointer,
-    IconArrowBackUp
-} from '@tabler/icons-react'
+import { IconX, IconChevronRight, IconAdjustments, IconMessage, IconWand, IconPlus, IconArrowBackUp } from '@tabler/icons-react'
 import useNotifier from '@/utils/useNotifier'
 import { LoadingButton } from '@mui/lab'
 import { flowContext } from '@/store/context/ReactFlowContext'
@@ -86,6 +91,12 @@ const AgentflowGeneratorPanel = ({ open, onClose }) => {
     const [flowHistory, setFlowHistory] = useState([])
     const [modificationHistory, setModificationHistory] = useState([])
     const [backendDebugLogs, setBackendDebugLogs] = useState([])
+
+    // Current flow state
+    const [currentFlow, setCurrentFlow] = useState({ nodes: [], edges: [] })
+
+    // Logging state
+    const [backendLogs, setBackendLogs] = useState([])
 
     const handleChatModelDataChange = ({ inputParam, newValue }) => {
         setSelectedChatModel((prevData) => {
@@ -185,8 +196,33 @@ const AgentflowGeneratorPanel = ({ open, onClose }) => {
         }
     }, [modelSelectionActive])
 
+    // Keep currentFlow in sync with ReactFlow instance
+    useEffect(() => {
+        if (reactFlowInstance) {
+            const nodes = reactFlowInstance.getNodes()
+            const edges = reactFlowInstance.getEdges()
+            setCurrentFlow({ nodes, edges })
+        }
+    }, [reactFlowInstance])
+
+    // Update currentFlow when ReactFlow instance changes
+    useEffect(() => {
+        if (reactFlowInstance) {
+            const nodes = reactFlowInstance.getNodes()
+            const edges = reactFlowInstance.getEdges()
+            setCurrentFlow({ nodes, edges })
+        }
+    }, [reactFlowInstance])
+
     const onGenerate = async () => {
         if (!customAssistantInstruction.trim()) return
+
+        // Log generate button click
+        console.log('🎯 [AGENTFLOW_GENERATOR] Generate Button Clicked:', {
+            instruction: customAssistantInstruction.trim(),
+            timestamp: new Date().toISOString()
+        })
+
         try {
             setLoading(true)
             const response = await chatflowsApi.generateAgentflow({
@@ -234,9 +270,23 @@ const AgentflowGeneratorPanel = ({ open, onClose }) => {
     // Enhanced: Handle sending a user message in the chat with cursor mode support
     const handleSendMessage = async () => {
         const trimmed = userMessage.trim()
-        if (!trimmed || loading || pendingLLM) return
-        console.log('[CursorMode] User clicked send. Message:', trimmed)
-        setConversation((prev) => [...prev, { role: 'user', content: trimmed }])
+        if (!trimmed || loading) return
+
+        // Log user input
+        console.log('🚀 [AGENTFLOW_GENERATOR] User Input:', {
+            message: trimmed,
+            timestamp: new Date().toISOString(),
+            sessionId: Date.now().toString()
+        })
+
+        setConversation((prev) => [
+            ...prev,
+            {
+                role: 'user',
+                content: trimmed
+            }
+        ])
+
         setUserMessage('')
         setPendingLLM(true)
 
@@ -258,189 +308,310 @@ const AgentflowGeneratorPanel = ({ open, onClose }) => {
             setLoading(true)
             let response
 
-            if (cursorMode) {
-                // Cursor mode: modify existing flow
-                const currentFlow = {
-                    nodes: reactFlowInstance.getNodes(),
-                    edges: reactFlowInstance.getEdges()
+            // Log API request
+            const sessionId = Date.now().toString()
+            console.log('📡 [AGENTFLOW_GENERATOR] API Request:', {
+                message: trimmed,
+                selectedChatModel: selectedChatModel.name,
+                currentFlowNodes: currentFlow.nodes.length,
+                currentFlowEdges: currentFlow.edges.length,
+                sessionId: sessionId,
+                timestamp: new Date().toISOString()
+            })
+
+            // Log AI Model Input
+            console.log('🤖 [AI_MODEL_INPUT] Sending to AI Model:', {
+                userMessage: trimmed,
+                selectedModel: selectedChatModel.name,
+                modelConfiguration: {
+                    temperature: selectedChatModel.inputs?.temperature,
+                    maxTokens: selectedChatModel.inputs?.maxTokens,
+                    modelName: selectedChatModel.inputs?.modelName
+                },
+                currentFlowState: {
+                    nodes: currentFlow.nodes.map((n) => ({ id: n.id, type: n.type, label: n.data?.label })),
+                    edges: currentFlow.edges.map((e) => ({ id: e.id, source: e.source, target: e.target }))
+                },
+                sessionId: sessionId,
+                timestamp: new Date().toISOString()
+            })
+
+            // Use the new conversational API for all messages
+            response = await chatflowsApi.processConversationalMessage({
+                message: trimmed,
+                selectedChatModel: selectedChatModel,
+                currentFlow: currentFlow,
+                sessionId: sessionId
+            })
+
+            // New: Handle context, nodes/edges, and explanation in order
+            if (response.data && (response.data.nodes || response.data.edges || response.data.context || response.data.explanation)) {
+                // 1. Context (before nodes/edges)
+                if (response.data.context) {
+                    setConversation((prev) => [
+                        ...prev,
+                        {
+                            role: 'assistant',
+                            content: response.data.context,
+                            type: 'context'
+                        }
+                    ])
                 }
-                console.log('[CursorMode] Preparing API call with currentFlow:', currentFlow)
-                // Save current state for undo
-                setFlowHistory((prev) => [...prev, currentFlow])
-
-                response = await chatflowsApi.generateAgentflowCursor({
-                    question: trimmed,
-                    selectedChatModel: selectedChatModel,
-                    currentFlow: currentFlow,
-                    selectedNodeIds: selectedNodes.map((n) => n.id)
-                })
-                console.log('[CursorMode] API response:', response)
-                console.log('[CursorMode] API response.data:', response.data)
-                console.log('[CursorMode] API response.data keys:', response.data ? Object.keys(response.data) : 'no data')
-
-                // Show backend debug logs in browser console and UI
-                if (response.data && response.data.debugLogs) {
-                    response.data.debugLogs.forEach((log) => {
-                        console.log('[backend-debug]', log)
-                    })
-                    setBackendDebugLogs(response.data.debugLogs)
-                } else {
-                    setBackendDebugLogs([])
-                }
-
-                // Print backend input/output debug data
-                if (response.data && response.data.debugData) {
-                    console.log('[backend-debug] INPUT:', response.data.debugData.input)
-                    console.log('[backend-debug] OUTPUT:', response.data.debugData.output)
-                }
-
-                // Step 2: Print AI model calls (input/output) if present
-                if (response.data && response.data.aiModelCalls) {
-                    response.data.aiModelCalls.forEach((call, idx) => {
-                        console.log(`[ai-model-call ${idx}] INPUT:`, call.input)
-                        console.log(`[ai-model-call ${idx}] OUTPUT:`, call.output)
-                    })
-                }
-
-                // Handle both response formats: complete flow or modifications
-                if (response.data && response.data.nodes && response.data.edges) {
-                    // Complete flow response (like generation mode)
-                    console.log('[CursorMode] Complete flow response received:', response.data)
-
-                    // Apply the complete flow to the canvas
+                // 2. Nodes/edges (the workflow)
+                if (response.data.nodes && response.data.edges) {
                     reactFlowInstance.setNodes(response.data.nodes)
                     reactFlowInstance.setEdges(response.data.edges)
-
+                    setCurrentFlow({ nodes: response.data.nodes, edges: response.data.edges })
+                }
+                // 3. Explanation (after nodes/edges)
+                if (response.data.explanation) {
                     setConversation((prev) => [
                         ...prev,
                         {
                             role: 'assistant',
-                            content: 'Flow updated successfully! The AI has provided a complete updated flow based on your request.',
-                            nodes: response.data.nodes,
-                            edges: response.data.edges
-                        }
-                    ])
-                } else if (response.data && response.data.modifications) {
-                    // Modifications response (original cursor mode format)
-                    console.log('[CursorMode] Modifications response received:', response.data)
-                    const result = applyCursorModifications(currentFlow, response.data.modifications)
-                    console.log('[CursorMode] Modifications applied:', result)
-
-                    if (result.success) {
-                        // Update canvas with modifications
-                        reactFlowInstance.setNodes(result.nodes)
-                        reactFlowInstance.setEdges(result.edges)
-                        // Highlight modifications
-                        highlightModifications(reactFlowInstance, result.highlightedElements)
-                        // Save modification history
-                        setModificationHistory((prev) => [
-                            ...prev,
-                            {
-                                modifications: response.data.modifications,
-                                reasoning: response.data.reasoning,
-                                timestamp: Date.now()
-                            }
-                        ])
-                        setConversation((prev) => [
-                            ...prev,
-                            {
-                                role: 'assistant',
-                                content: response.data.reasoning || 'Modifications applied successfully!',
-                                modifications: response.data.modifications,
-                                confidence: response.data.confidence
-                            }
-                        ])
-                    } else {
-                        console.error('[CursorMode] Failed to apply modifications:', result.error)
-                        setConversation((prev) => [
-                            ...prev,
-                            {
-                                role: 'assistant',
-                                content: `Failed to apply modifications: ${result.error}`
-                            }
-                        ])
-                    }
-                } else {
-                    console.error('[CursorMode] API did not return valid response format:', response.data)
-                    // Handle error responses from backend
-                    const errorMessage =
-                        response.data?.reasoning || response.data?.error || response.data?.message || 'Failed to process cursor request.'
-
-                    setConversation((prev) => [
-                        ...prev,
-                        {
-                            role: 'assistant',
-                            content: errorMessage
+                            content: response.data.explanation,
+                            type: 'explanation'
                         }
                     ])
                 }
-            } else if (chatType === 'generate') {
-                // Existing agentflow generation logic
-                const historyForBackend = conversation
-                    .filter((msg) => msg.role === 'user' || msg.role === 'assistant')
-                    .map((msg) => ({ role: msg.role, content: msg.content }))
-                response = await chatflowsApi.generateAgentflow({
-                    question: trimmed,
-                    selectedChatModel: selectedChatModel,
-                    history: historyForBackend
-                })
+                return
+            }
 
-                console.log('[GenerateMode] API response:', response)
-                console.log('[GenerateMode] API response.data:', response.data)
-                console.log('[GenerateMode] API response.data keys:', response.data ? Object.keys(response.data) : 'no data')
+            // Log AI Model Output
+            console.log('🤖 [AI_MODEL_OUTPUT] Received from AI Model:', {
+                responseStatus: response.status,
+                responseType: response.data?.type,
+                aiResponse: {
+                    content: response.data?.content,
+                    type: response.data?.type,
+                    modifications: response.data?.modifications,
+                    flow: response.data?.flow
+                        ? {
+                              nodesCount: response.data.flow.nodes?.length,
+                              edgesCount: response.data.flow.edges?.length
+                          }
+                        : null,
+                    searchResults: response.data?.results
+                        ? {
+                              query: response.data.searchQuery,
+                              resultsCount: response.data.results.length
+                          }
+                        : null
+                },
+                sessionId: sessionId,
+                timestamp: new Date().toISOString()
+            })
 
-                if (response.data && response.data.nodes && response.data.edges) {
-                    setConversation((prev) => [
-                        ...prev,
-                        {
-                            role: 'assistant',
-                            content: 'Here is your generated Agentflow! You can apply it to the canvas or ask for changes.',
-                            nodes: response.data.nodes,
-                            edges: response.data.edges
+            // Log API response
+            console.log('📥 [AGENTFLOW_GENERATOR] API Response:', {
+                status: response.status,
+                responseType: response.data?.type,
+                hasData: !!response.data,
+                dataKeys: response.data ? Object.keys(response.data) : [],
+                timestamp: new Date().toISOString()
+            })
+
+            // Log backend logs if available
+            if (response.data?.logs) {
+                console.log('🔍 [AGENTFLOW_GENERATOR] Backend Logs:', response.data.logs)
+                setBackendLogs((prev) => [...prev, ...response.data.logs])
+            }
+
+            if (response.data && response.data.type) {
+                // Handle different response types
+                switch (response.data.type) {
+                    case 'chat_response':
+                        // Log AI chat response processing
+                        console.log('💬 [AI_MODEL_PROCESSING] Processing Chat Response:', {
+                            aiResponseContent: response.data.content,
+                            responseLength: response.data.content?.length,
+                            processingType: 'chat_response',
+                            timestamp: new Date().toISOString()
+                        })
+
+                        // General chat response
+                        setConversation((prev) => [
+                            ...prev,
+                            {
+                                role: 'assistant',
+                                content: response.data.content
+                            }
+                        ])
+                        break
+
+                    case 'web_search_results':
+                        // Log AI web search processing
+                        console.log('🌐 [AI_MODEL_PROCESSING] Processing Web Search Results:', {
+                            aiGeneratedQuery: response.data.searchQuery,
+                            aiFoundResults: response.data.results?.length || 0,
+                            aiResponseContent: response.data.content,
+                            processingType: 'web_search_results',
+                            timestamp: new Date().toISOString()
+                        })
+
+                        // Web search results
+                        setConversation((prev) => [
+                            ...prev,
+                            {
+                                role: 'assistant',
+                                content: response.data.content,
+                                searchResults: response.data.results,
+                                searchQuery: response.data.searchQuery
+                            }
+                        ])
+                        break
+
+                    case 'agentflow_modification':
+                        // Log AI agentflow modification processing
+                        console.log('🔧 [AI_MODEL_PROCESSING] Processing Agentflow Modification:', {
+                            aiGeneratedModifications: response.data.modifications?.length || 0,
+                            aiModificationDetails: response.data.modifications,
+                            aiResponseContent: response.data.content,
+                            processingType: 'agentflow_modification',
+                            timestamp: new Date().toISOString()
+                        })
+
+                        // Agentflow modification
+                        if (response.data.modifications) {
+                            const result = applyCursorModifications(currentFlow, response.data.modifications)
+                            console.log('🔧 [AI_MODEL_POST_PROCESSING] Modifications Applied:', {
+                                aiModificationsSuccess: result.success,
+                                aiGeneratedNodes: result.nodes?.length || 0,
+                                aiGeneratedEdges: result.edges?.length || 0,
+                                aiHighlightedElements: result.highlightedElements?.length || 0,
+                                postProcessingResult: result,
+                                timestamp: new Date().toISOString()
+                            })
+
+                            if (result.success) {
+                                // Update canvas with modifications
+                                reactFlowInstance.setNodes(result.nodes)
+                                reactFlowInstance.setEdges(result.edges)
+                                // Highlight modifications
+                                highlightModifications(reactFlowInstance, result.highlightedElements)
+                                // Save modification history
+                                setModificationHistory((prev) => [
+                                    ...prev,
+                                    {
+                                        modifications: response.data.modifications,
+                                        timestamp: new Date().toISOString()
+                                    }
+                                ])
+                            }
                         }
-                    ])
-                } else {
-                    console.error('[GenerateMode] API did not return valid response format:', response.data)
-                    const errorMessage =
-                        response.data?.reasoning ||
-                        response.data?.error ||
-                        response.data?.message ||
-                        response.error ||
-                        'Failed to generate agentflow.'
 
-                    setConversation((prev) => [
-                        ...prev,
-                        {
-                            role: 'assistant',
-                            content: errorMessage
+                        setConversation((prev) => [
+                            ...prev,
+                            {
+                                role: 'assistant',
+                                content: response.data.content
+                            }
+                        ])
+                        break
+
+                    case 'complete_workflow':
+                        // Log AI complete workflow processing
+                        console.log('🎯 [AI_MODEL_PROCESSING] Processing Complete Workflow:', {
+                            aiGeneratedFlow: !!response.data.flow,
+                            aiGeneratedNodes: response.data.flow?.nodes?.length || 0,
+                            aiGeneratedEdges: response.data.flow?.edges?.length || 0,
+                            aiResponseContent: response.data.content,
+                            aiWorkflowData: response.data.flow,
+                            processingType: 'complete_workflow',
+                            timestamp: new Date().toISOString()
+                        })
+
+                        // Complete workflow creation
+                        if (response.data.flow && response.data.flow.nodes && response.data.flow.edges) {
+                            // Set the complete flow
+                            reactFlowInstance.setNodes(response.data.flow.nodes)
+                            reactFlowInstance.setEdges(response.data.flow.edges)
+
+                            // Save the flow
+                            setCurrentFlow({
+                                nodes: response.data.flow.nodes,
+                                edges: response.data.flow.edges
+                            })
+
+                            console.log('🎯 [AI_MODEL_POST_PROCESSING] Complete Workflow Applied:', {
+                                aiGeneratedNodesApplied: response.data.flow.nodes.length,
+                                aiGeneratedEdgesApplied: response.data.flow.edges.length,
+                                aiWorkflowApplied: true,
+                                postProcessingResult: 'Workflow successfully applied to canvas',
+                                timestamp: new Date().toISOString()
+                            })
                         }
-                    ])
+
+                        setConversation((prev) => [
+                            ...prev,
+                            {
+                                role: 'assistant',
+                                content: response.data.content,
+                                workflowData: {
+                                    researchResults: response.data.researchResults,
+                                    testResults: response.data.testResults,
+                                    iterations: response.data.iterations
+                                }
+                            }
+                        ])
+                        break
+
+                    default:
+                        // Log unknown AI response type
+                        console.log('❓ [AI_MODEL_PROCESSING] Unknown AI Response Type:', {
+                            aiResponseType: response.data.type,
+                            aiResponseContent: response.data.content,
+                            processingType: 'unknown_response',
+                            timestamp: new Date().toISOString()
+                        })
+
+                        // Fallback for unknown response types
+                        setConversation((prev) => [
+                            ...prev,
+                            {
+                                role: 'assistant',
+                                content: response.data.content || 'I processed your request successfully.'
+                            }
+                        ])
                 }
             } else {
-                // 'talk' mode: just send prompt to model, no context/history
-                response = await chatflowsApi.generateAgentflow({
-                    question: trimmed,
-                    selectedChatModel: selectedChatModel
-                })
+                console.error('[ConversationalMode] API did not return valid response format:', response.data)
+                // Handle error responses from backend
+                const errorMessage =
+                    response.data?.reasoning || response.data?.error || response.data?.message || 'Failed to process your request.'
 
                 setConversation((prev) => [
                     ...prev,
                     {
                         role: 'assistant',
-                        content: response.data?.text || response.data?.message || response.error || 'No response.'
+                        content: errorMessage
                     }
                 ])
             }
         } catch (error) {
+            console.error('❌ [AI_MODEL_ERROR] AI Model Processing Error:', {
+                errorMessage: error.message,
+                errorResponse: error.response?.data,
+                aiModelName: selectedChatModel.name,
+                sessionId: sessionId,
+                timestamp: new Date().toISOString()
+            })
+
             setConversation((prev) => [
                 ...prev,
                 {
                     role: 'assistant',
-                    content: error.response?.data?.message || 'Failed to process request.'
+                    content: error.response?.data?.error || error.message || 'An error occurred while processing your request.'
                 }
             ])
         } finally {
-            console.log('[handleSendMessage] Finally block - setting loading states to false')
+            const finalSessionId = sessionId || Date.now().toString()
+            console.log('✅ [AI_MODEL_COMPLETED] AI Model Request Completed:', {
+                sessionId: finalSessionId,
+                aiModelName: selectedChatModel.name,
+                totalProcessingTime: Date.now() - parseInt(finalSessionId),
+                timestamp: new Date().toISOString()
+            })
             clearTimeout(timeoutId) // Clear the timeout
             setLoading(false)
             setPendingLLM(false)
@@ -457,11 +628,27 @@ const AgentflowGeneratorPanel = ({ open, onClose }) => {
     }, [open, selectedChatModel])
 
     // New: Open model modal from button
-    const openModelModal = () => setModelModalOpen(true)
-    const closeModelModal = () => setModelModalOpen(false)
+    const openModelModal = () => {
+        console.log('🔧 [AGENTFLOW_GENERATOR] Model Modal Opened:', {
+            timestamp: new Date().toISOString()
+        })
+        setModelModalOpen(true)
+    }
+    const closeModelModal = () => {
+        console.log('🔧 [AGENTFLOW_GENERATOR] Model Modal Closed:', {
+            timestamp: new Date().toISOString()
+        })
+        setModelModalOpen(false)
+    }
 
     // New: Handle model selection from modal
     const handleModelSelect = (newValue) => {
+        // Log model selection
+        console.log('🤖 [AGENTFLOW_GENERATOR] Model Selected:', {
+            model: newValue,
+            timestamp: new Date().toISOString()
+        })
+
         if (!newValue) {
             setSelectedChatModel({})
         } else {
@@ -502,6 +689,12 @@ const AgentflowGeneratorPanel = ({ open, onClose }) => {
 
     // Handle undo functionality
     const handleUndo = () => {
+        // Log undo action
+        console.log('↩️ [AGENTFLOW_GENERATOR] Undo Action:', {
+            flowHistoryLength: flowHistory.length,
+            timestamp: new Date().toISOString()
+        })
+
         if (flowHistory.length > 0) {
             const previousState = flowHistory[flowHistory.length - 1]
             reactFlowInstance.setNodes(previousState.nodes)
@@ -657,29 +850,95 @@ const AgentflowGeneratorPanel = ({ open, onClose }) => {
         </Box>
     )
 
+    // Render message content based on type
+    const renderMessageContent = (message) => {
+        if (message.searchResults) {
+            return (
+                <Box>
+                    <Typography variant='body1' sx={{ mb: 2 }}>
+                        {message.content}
+                    </Typography>
+                    <Box sx={{ maxHeight: 300, overflowY: 'auto' }}>
+                        {message.searchResults.map((result, index) => (
+                            <Card key={index} sx={{ mb: 1, p: 1 }}>
+                                <Typography variant='subtitle2' color='primary'>
+                                    <a href={result.url} target='_blank' rel='noopener noreferrer'>
+                                        {result.title}
+                                    </a>
+                                </Typography>
+                                <Typography variant='body2' color='text.secondary'>
+                                    {result.snippet}
+                                </Typography>
+                            </Card>
+                        ))}
+                    </Box>
+                </Box>
+            )
+        }
+
+        if (message.workflowData) {
+            return (
+                <Box>
+                    <Typography variant='body1' sx={{ mb: 2 }}>
+                        {message.content}
+                    </Typography>
+                    <Accordion>
+                        <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                            <Typography variant='subtitle2'>Workflow Details</Typography>
+                        </AccordionSummary>
+                        <AccordionDetails>
+                            <Box>
+                                <Typography variant='body2' sx={{ mb: 1 }}>
+                                    <strong>Research Results:</strong>
+                                </Typography>
+                                <Typography variant='body2' color='text.secondary' sx={{ mb: 2 }}>
+                                    {message.workflowData.researchResults}
+                                </Typography>
+
+                                <Typography variant='body2' sx={{ mb: 1 }}>
+                                    <strong>Test Results:</strong>
+                                </Typography>
+                                <Typography variant='body2' color='text.secondary' sx={{ mb: 2 }}>
+                                    {message.workflowData.testResults?.report || 'Test completed successfully'}
+                                </Typography>
+
+                                <Typography variant='body2' sx={{ mb: 1 }}>
+                                    <strong>Iterations:</strong> {message.workflowData.iterations}
+                                </Typography>
+                            </Box>
+                        </AccordionDetails>
+                    </Accordion>
+                </Box>
+            )
+        }
+
+        return <Typography variant='body1'>{message.content}</Typography>
+    }
+
     return (
         <Drawer anchor='right' open={open} onClose={onClose} variant='persistent' PaperProps={{ sx: { width: 400 } }}>
             <Box sx={{ display: 'flex', alignItems: 'center', p: 1, borderBottom: '1px solid #eee' }}>
                 <Typography variant='h6' sx={{ flex: 1 }}>
                     Generate Agentflow
                 </Typography>
-                <IconButton onClick={onClose}>
+                <IconButton
+                    onClick={() => {
+                        console.log('❌ [AGENTFLOW_GENERATOR] Panel Closed:', {
+                            timestamp: new Date().toISOString()
+                        })
+                        onClose()
+                    }}
+                >
                     <IconChevronRight />
                 </IconButton>
             </Box>
 
-            {/* Cursor Mode Toggle */}
+            {/* AI Assistant Header */}
             <Box sx={{ p: 2, borderBottom: '1px solid #eee' }}>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-                    <Button
-                        variant={cursorMode ? 'contained' : 'outlined'}
-                        size='small'
-                        startIcon={<IconPointer />}
-                        onClick={() => setCursorMode(!cursorMode)}
-                        sx={{ flex: 1 }}
-                    >
-                        {cursorMode ? 'Cursor Mode' : 'Generate New'}
-                    </Button>
+                    <Typography variant='subtitle1' color='primary' sx={{ display: 'flex', alignItems: 'center', flex: 1 }}>
+                        🤖 AI Assistant - Ask me anything about your agentflow!
+                    </Typography>
                     {modificationHistory.length > 0 && (
                         <Tooltip title='Undo Last Modification'>
                             <IconButton size='small' onClick={handleUndo} disabled={flowHistory.length === 0}>
@@ -689,28 +948,20 @@ const AgentflowGeneratorPanel = ({ open, onClose }) => {
                     )}
                 </Box>
 
-                {cursorMode && (
-                    <Box
-                        sx={{
-                            p: 1,
-                            bgcolor: 'info.light',
-                            borderRadius: 1,
-                            border: '1px solid',
-                            borderColor: 'info.main'
-                        }}
-                    >
-                        <Typography variant='caption' color='info.contrastText'>
-                            <strong>Cursor Mode Active:</strong> AI will modify your existing flow based on your request. Selected nodes
-                            will be used as connection points.
-                        </Typography>
-                        <Button size='small' variant='outlined' onClick={testCursorMode} sx={{ mt: 1, width: '100%' }}>
-                            Test Cursor Mode
-                        </Button>
-                        <Button size='small' variant='outlined' onClick={testGenerationMode} sx={{ mt: 1, width: '100%' }}>
-                            Test Generation Mode
-                        </Button>
-                    </Box>
-                )}
+                <Box
+                    sx={{
+                        p: 1,
+                        bgcolor: 'info.light',
+                        borderRadius: 1,
+                        border: '1px solid',
+                        borderColor: 'info.main'
+                    }}
+                >
+                    <Typography variant='caption' color='info.contrastText'>
+                        <strong>What I can do:</strong>• General chat and questions • Add, update, or delete nodes • Web search and research
+                        • Create complete workflows with testing • Modify existing flows
+                    </Typography>
+                </Box>
             </Box>
             <Box sx={{ p: 2, height: '100%', display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
                 {/* Always show chat UI, never show loading animation */}
@@ -749,9 +1000,7 @@ const AgentflowGeneratorPanel = ({ open, onClose }) => {
                                         boxShadow: 1
                                     }}
                                 >
-                                    <Typography variant='body2' sx={{ whiteSpace: 'pre-line' }}>
-                                        {msg.content}
-                                    </Typography>
+                                    {renderMessageContent(msg)}
                                     {/* If LLM message has nodes/edges, show a preview button */}
                                     {msg.role === 'assistant' && msg.nodes && msg.edges && (
                                         <>
@@ -797,6 +1046,17 @@ const AgentflowGeneratorPanel = ({ open, onClose }) => {
                                                             <IconButton
                                                                 color='primary'
                                                                 onClick={() => {
+                                                                    // Log individual node addition
+                                                                    console.log('➕ [AGENTFLOW_GENERATOR] Individual Node Added:', {
+                                                                        nodeId: node.id,
+                                                                        nodeType: node.type,
+                                                                        nodeLabel: node.data?.label,
+                                                                        outgoingEdgesCount: Array.isArray(msg.edges)
+                                                                            ? msg.edges.filter((e) => e.source === node.id).length
+                                                                            : 0,
+                                                                        timestamp: new Date().toISOString()
+                                                                    })
+
                                                                     // Add this node and all outgoing edges from this node
                                                                     const nodeId = node.id
                                                                     const outgoingEdges = Array.isArray(msg.edges)
@@ -816,6 +1076,13 @@ const AgentflowGeneratorPanel = ({ open, onClose }) => {
                                                         sx={{ mt: 1, width: '100%' }}
                                                         variant='contained'
                                                         onClick={() => {
+                                                            // Log all nodes addition
+                                                            console.log('🎯 [AGENTFLOW_GENERATOR] All Nodes Added:', {
+                                                                nodesCount: msg.nodes?.length || 0,
+                                                                edgesCount: msg.edges?.length || 0,
+                                                                timestamp: new Date().toISOString()
+                                                            })
+
                                                             // Add all nodes and all edges
                                                             reactFlowInstance.setNodes(msg.nodes)
                                                             reactFlowInstance.setEdges(msg.edges)
@@ -859,6 +1126,11 @@ const AgentflowGeneratorPanel = ({ open, onClose }) => {
                                 onKeyDown={(e) => {
                                     if (e.key === 'Enter' && !e.shiftKey) {
                                         e.preventDefault()
+                                        // Log Enter key press
+                                        console.log('⌨️ [AGENTFLOW_GENERATOR] Enter Key Pressed:', {
+                                            message: userMessage,
+                                            timestamp: new Date().toISOString()
+                                        })
                                         handleSendMessage()
                                     }
                                 }}
@@ -867,7 +1139,14 @@ const AgentflowGeneratorPanel = ({ open, onClose }) => {
                             <LoadingButton
                                 loading={loading || pendingLLM}
                                 variant='contained'
-                                onClick={handleSendMessage}
+                                onClick={() => {
+                                    // Log Send button click
+                                    console.log('📤 [AGENTFLOW_GENERATOR] Send Button Clicked:', {
+                                        message: userMessage,
+                                        timestamp: new Date().toISOString()
+                                    })
+                                    handleSendMessage()
+                                }}
                                 disabled={!userMessage.trim() || loading || pendingLLM}
                             >
                                 Send
@@ -875,7 +1154,15 @@ const AgentflowGeneratorPanel = ({ open, onClose }) => {
                             <Tooltip title={chatType === 'generate' ? 'Generate Agentflow (default)' : 'Switch to Generate Agentflow'}>
                                 <IconButton
                                     color={chatType === 'generate' ? 'primary' : 'default'}
-                                    onClick={() => setChatType('generate')}
+                                    onClick={() => {
+                                        // Log chat type switch
+                                        console.log('🔄 [AGENTFLOW_GENERATOR] Chat Type Switched:', {
+                                            from: chatType,
+                                            to: 'generate',
+                                            timestamp: new Date().toISOString()
+                                        })
+                                        setChatType('generate')
+                                    }}
                                     disabled={loading || pendingLLM}
                                     sx={{ p: 1 }}
                                     aria-label='Generate Agentflow Chat Type'
@@ -886,7 +1173,15 @@ const AgentflowGeneratorPanel = ({ open, onClose }) => {
                             <Tooltip title={chatType === 'talk' ? 'Talk to AI (no context)' : 'Switch to Talk to AI'}>
                                 <IconButton
                                     color={chatType === 'talk' ? 'primary' : 'default'}
-                                    onClick={() => setChatType('talk')}
+                                    onClick={() => {
+                                        // Log chat type switch
+                                        console.log('🔄 [AGENTFLOW_GENERATOR] Chat Type Switched:', {
+                                            from: chatType,
+                                            to: 'talk',
+                                            timestamp: new Date().toISOString()
+                                        })
+                                        setChatType('talk')
+                                    }}
                                     disabled={loading || pendingLLM}
                                     sx={{ p: 1 }}
                                     aria-label='Talk to AI Chat Type'
@@ -910,10 +1205,21 @@ const AgentflowGeneratorPanel = ({ open, onClose }) => {
                     )}
                 </Box>
                 {/* Backend Debug Logs Panel */}
-                {backendDebugLogs.length > 0 && (
-                    <Box sx={{ p: 2, bgcolor: '#222', color: '#fff', borderRadius: 2, mt: 2 }}>
-                        <Typography variant='subtitle2'>Backend Debug Logs:</Typography>
-                        <pre style={{ whiteSpace: 'pre-wrap' }}>{backendDebugLogs.join('\n')}</pre>
+                {backendLogs.length > 0 && (
+                    <Box sx={{ p: 2, bgcolor: '#222', color: '#fff', borderRadius: 2, mt: 2, maxHeight: 200, overflowY: 'auto' }}>
+                        <Typography variant='subtitle2' sx={{ color: '#fff', mb: 1 }}>
+                            🔍 Backend Processing Logs:
+                        </Typography>
+                        {backendLogs.map((log, index) => (
+                            <Box key={index} sx={{ mb: 1, p: 1, bgcolor: '#333', borderRadius: 1 }}>
+                                <Typography variant='caption' sx={{ color: '#aaa' }}>
+                                    {log.timestamp || new Date().toISOString()}
+                                </Typography>
+                                <Typography variant='body2' sx={{ color: '#fff', mt: 0.5 }}>
+                                    {log.message || log}
+                                </Typography>
+                            </Box>
+                        ))}
                     </Box>
                 )}
             </Box>

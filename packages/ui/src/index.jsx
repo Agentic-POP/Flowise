@@ -14,6 +14,7 @@ import ConfirmContextProvider from '@/store/context/ConfirmContextProvider'
 import { ReactFlowContext } from '@/store/context/ReactFlowContext'
 import { ConfigProvider } from '@/store/context/ConfigContext'
 import { ErrorProvider } from '@/store/context/ErrorContext'
+import { GlobalChatProvider } from '@/store/context/GlobalChatContext'
 
 const container = document.getElementById('root')
 const root = createRoot(container)
@@ -27,7 +28,9 @@ root.render(
                         <ErrorProvider>
                             <ConfirmContextProvider>
                                 <ReactFlowContext>
-                                    <App />
+                                    <GlobalChatProvider>
+                                        <App />
+                                    </GlobalChatProvider>
                                 </ReactFlowContext>
                             </ConfirmContextProvider>
                         </ErrorProvider>

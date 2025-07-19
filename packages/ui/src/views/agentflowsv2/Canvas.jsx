@@ -16,7 +16,7 @@ import {
 import { omit, cloneDeep } from 'lodash'
 
 // material-ui
-import { Toolbar, Box, AppBar, Button, Fab, Modal, List, ListItem, ListItemText, ListItemButton, Typography } from '@mui/material'
+import { Toolbar, Box, AppBar, Button, Fab } from '@mui/material'
 import { useTheme } from '@mui/material/styles'
 
 // project imports
@@ -32,6 +32,7 @@ import EditNodeDialog from '@/views/agentflowsv2/EditNodeDialog'
 import ChatPopUp from '@/views/chatmessage/ChatPopUp'
 import ValidationPopUp from '@/views/chatmessage/ValidationPopUp'
 import { flowContext } from '@/store/context/ReactFlowContext'
+import EnhancedHistoryModal from '@/ui-component/dialog/EnhancedHistoryModal'
 
 // API
 import nodesApi from '@/api/nodes'
@@ -40,19 +41,10 @@ import chatflowsApi from '@/api/chatflows'
 // Hooks
 import useApi from '@/hooks/useApi'
 import useConfirm from '@/hooks/useConfirm'
+import { useEnhancedHistory } from '@/hooks/useEnhancedHistory'
 
 // icons
-import {
-    IconX,
-    IconRefreshAlert,
-    IconMagnetFilled,
-    IconMagnetOff,
-    IconChevronLeft,
-    IconWand,
-    IconHistory,
-    IconArrowBackUp,
-    IconArrowForwardUp
-} from '@tabler/icons-react'
+import { IconX, IconRefreshAlert, IconMagnetFilled, IconMagnetOff, IconWand } from '@tabler/icons-react'
 
 // utils
 import {
@@ -70,7 +62,6 @@ import { usePrompt } from '@/utils/usePrompt'
 import { FLOWISE_CREDENTIAL_ID, AGENTFLOW_ICONS } from '@/store/constant'
 import PropTypes from 'prop-types'
 import AgentflowGeneratorPanel from './AgentflowGeneratorPanel'
-import dayjs from 'dayjs'
 
 const nodeTypes = { agentFlow: CanvasNode, stickyNote: StickyNote, iteration: IterationNode }
 const edgeTypes = { agentFlow: AgentFlowEdge }
@@ -99,71 +90,15 @@ const AgentflowCanvas = ({ chatflowId: propChatflowId }) => {
     const canvas = useSelector((state) => state.canvas)
     const [canvasDataStore, setCanvasDataStore] = useState(canvas)
     const [chatflow, setChatflow] = useState(null)
-    const { reactFlowInstance, setReactFlowInstance } = useContext(flowContext)
+    const flowContextValue = useContext(flowContext)
+    const { reactFlowInstance, setReactFlowInstance } = flowContextValue
 
-    const [history, setHistory] = useState([])
-    const [historyIndex, setHistoryIndex] = useState(0)
+    // Enhanced history management
+    const { history, historyIndex, canUndo, canRedo, pushHistory, undo, redo, clearHistory, getCurrentState, shouldCreateHistoryEntry } =
+        useEnhancedHistory()
 
-    // Helper to push to history
-    const pushHistory = (newNodes, newEdges, label = 'Canvas updated') => {
-        setHistory((prev) => {
-            const truncated = prev.slice(0, historyIndex + 1)
-            return [
-                ...truncated,
-                {
-                    nodes: newNodes,
-                    edges: newEdges,
-                    timestamp: dayjs().format('YYYY-MM-DD HH:mm:ss'),
-                    label
-                }
-            ]
-        })
-        setHistoryIndex((idx) => idx + 1)
-    }
-
-    // Wrap setNodes and setEdges to also push to history
-    const setNodesWithHistory = (newNodes, label) => {
-        setNodes(newNodes)
-        pushHistory(newNodes, edges, label)
-    }
-    const setEdgesWithHistory = (newEdges, label) => {
-        setEdges(newEdges)
-        pushHistory(nodes, newEdges, label)
-    }
-
-    // Undo/redo handlers
-    const undo = () => {
-        if (historyIndex > 0) {
-            const prev = history[historyIndex - 1]
-            setNodes(prev.nodes)
-            setEdges(prev.edges)
-            setHistoryIndex(historyIndex - 1)
-        }
-    }
-    const redo = () => {
-        if (historyIndex < history.length - 1) {
-            const next = history[historyIndex + 1]
-            setNodes(next.nodes)
-            setEdges(next.edges)
-            setHistoryIndex(historyIndex + 1)
-        }
-    }
-
-    // Keyboard shortcuts for undo/redo
-    useEffect(() => {
-        const handleKeyDown = (e) => {
-            if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
-                e.preventDefault()
-                undo()
-            } else if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) {
-                e.preventDefault()
-                redo()
-            }
-        }
-        window.addEventListener('keydown', handleKeyDown)
-        return () => window.removeEventListener('keydown', handleKeyDown)
-        // eslint-disable-next-line
-    }, [historyIndex, history])
+    // Create enhanced context value with history callbacks (will be defined after handlers)
+    const [enhancedFlowContextValue, setEnhancedFlowContextValue] = useState(flowContextValue)
 
     // ==============================|| Snackbar ||============================== //
 
@@ -183,6 +118,12 @@ const AgentflowCanvas = ({ chatflowId: propChatflowId }) => {
     const [isSnappingEnabled, setIsSnappingEnabled] = useState(false)
 
     const reactFlowWrapper = useRef(null)
+
+    // ==============================|| Utility Functions ||============================== //
+
+    const setDirty = () => {
+        dispatch({ type: SET_DIRTY })
+    }
 
     // ==============================|| Chatflow API ||============================== //
 
@@ -233,16 +174,34 @@ const AgentflowCanvas = ({ chatflowId: propChatflowId }) => {
             type: 'agentFlow',
             id: `${params.source}-${params.sourceHandle}-${params.target}-${params.targetHandle}`
         }
-        setEdgesWithHistory(addEdge(newEdge, edges), 'Added edge')
+
+        const oldState = { nodes, edges }
+        const newEdges = addEdge(newEdge, edges)
+        setEdges(newEdges)
+
+        // Add to history with enhanced tracking
+        pushHistory('connect_edges', nodes, newEdges, oldState, {
+            description: `Connected ${nodeName} to ${targetNodeName}`,
+            source: 'manual',
+            selectedNodes: [params.source, params.target]
+        })
     }
 
     const handleLoadFlow = (file) => {
         try {
             const flowData = JSON.parse(file)
             const nodes = flowData.nodes || []
+            const oldState = { nodes, edges }
 
-            setNodesWithHistory(nodes, 'Loaded flow')
-            setEdgesWithHistory(flowData.edges || [], 'Loaded flow')
+            setNodes(nodes)
+            setEdges(flowData.edges || [])
+
+            // Add to history
+            pushHistory('load_flow', nodes, flowData.edges || [], oldState, {
+                description: 'Loaded flow from file',
+                source: 'import'
+            })
+
             setTimeout(() => setDirty(), 0)
         } catch (e) {
             console.error(e)
@@ -297,220 +256,95 @@ const AgentflowCanvas = ({ chatflowId: propChatflowId }) => {
                 return node
             })
 
-            const rfInstanceObject = reactFlowInstance.toObject()
-            rfInstanceObject.nodes = nodes
-            const flowData = JSON.stringify(rfInstanceObject)
+            const edges = reactFlowInstance.getEdges().map((edge) => {
+                const edgeData = cloneDeep(edge.data)
+                return {
+                    ...edge,
+                    data: {
+                        ...edgeData,
+                        selected: false
+                    }
+                }
+            })
 
-            if (!chatflow.id) {
-                const newChatflowBody = {
+            const flowData = {
+                nodes,
+                edges
+            }
+
+            if (chatflow.id) {
+                updateChatflowApi.request(chatflow.id, {
                     name: chatflowName,
-                    deployed: false,
-                    isPublic: false,
-                    flowData,
-                    type: 'AGENTFLOW'
-                }
-                createNewChatflowApi.request(newChatflowBody)
+                    flowData: JSON.stringify(flowData)
+                })
             } else {
-                const updateBody = {
+                createNewChatflowApi.request({
                     name: chatflowName,
-                    flowData
-                }
-                updateChatflowApi.request(chatflow.id, updateBody)
+                    flowData: JSON.stringify(flowData),
+                    type: 'AGENTFLOWV2'
+                })
             }
         }
     }
 
-    // eslint-disable-next-line
-    const onNodeClick = useCallback((event, clickedNode) => {
-        setSelectedNode(clickedNode)
-        setNodesWithHistory(
-            nodes.map((node) => {
-                if (node.id === clickedNode.id) {
-                    node.data = {
-                        ...node.data,
-                        selected: true
-                    }
-                } else {
-                    node.data = {
-                        ...node.data,
-                        selected: false
-                    }
+    const onNodeClick = (event, node) => {
+        setSelectedNode(node)
+    }
+
+    const onNodeDoubleClick = (event, node) => {
+        setEditNodeDialogProps({
+            node,
+            reactFlowInstance
+        })
+        setEditNodeDialogOpen(true)
+    }
+
+    const onDrop = useCallback(
+        (event) => {
+            event.preventDefault()
+
+            const reactFlowBounds = reactFlowWrapper.current.getBoundingClientRect()
+            const data = JSON.parse(event.dataTransfer.getData('application/reactflow'))
+
+            const position = reactFlowInstance.project({
+                x: event.clientX - reactFlowBounds.left,
+                y: event.clientY - reactFlowBounds.top
+            })
+
+            const newNode = {
+                id: getUniqueNodeId(data.name),
+                type: 'agentFlow',
+                position,
+                data: {
+                    ...initNode(data, getUniqueNodeId(data.name)),
+                    label: getUniqueNodeLabel(data.name)
                 }
-
-                return node
-            }),
-            'Node clicked'
-        )
-    })
-
-    // eslint-disable-next-line
-    const onNodeDoubleClick = useCallback((event, node) => {
-        if (!node || !node.data) return
-        if (node.data.name === 'stickyNoteAgentflow') {
-            // dont show dialog
-        } else {
-            const dialogProps = {
-                data: node.data,
-                inputParams: node.data.inputParams.filter((inputParam) => !inputParam.hidden)
             }
 
-            setEditNodeDialogProps(dialogProps)
-            setEditNodeDialogOpen(true)
-        }
-    })
+            const oldState = { nodes, edges }
+            const newNodes = nodes.map((node) => {
+                return node
+            })
+            newNodes.push(newNode)
+
+            setNodes(newNodes)
+
+            // Add to history with enhanced tracking
+            pushHistory('add_nodes', newNodes, edges, oldState, {
+                description: `Added ${data.name} node`,
+                source: 'drag_drop',
+                selectedNodes: [newNode.id]
+            })
+
+            setTimeout(() => setDirty(), 0)
+        },
+        [reactFlowInstance, nodes, edges, pushHistory]
+    )
 
     const onDragOver = useCallback((event) => {
         event.preventDefault()
         event.dataTransfer.dropEffect = 'move'
     }, [])
-
-    const onDrop = useCallback(
-        (event) => {
-            event.preventDefault()
-            const reactFlowBounds = reactFlowWrapper.current.getBoundingClientRect()
-            let nodeData = event.dataTransfer.getData('application/reactflow')
-
-            // check if the dropped element is valid
-            if (typeof nodeData === 'undefined' || !nodeData) {
-                return
-            }
-
-            nodeData = JSON.parse(nodeData)
-
-            const position = reactFlowInstance.project({
-                x: event.clientX - reactFlowBounds.left - 100,
-                y: event.clientY - reactFlowBounds.top - 50
-            })
-            const nodes = reactFlowInstance.getNodes()
-
-            if (nodeData.name === 'startAgentflow' && nodes.find((node) => node.data.name === 'startAgentflow')) {
-                enqueueSnackbar({
-                    message: 'Only one start node is allowed',
-                    options: {
-                        key: new Date().getTime() + Math.random(),
-                        variant: 'error',
-                        persist: true,
-                        action: (key) => (
-                            <Button style={{ color: 'white' }} onClick={() => closeSnackbar(key)}>
-                                <IconX />
-                            </Button>
-                        )
-                    }
-                })
-                return
-            }
-
-            const newNodeId = getUniqueNodeId(nodeData, reactFlowInstance.getNodes())
-            const newNodeLabel = getUniqueNodeLabel(nodeData, nodes)
-
-            const newNode = {
-                id: newNodeId,
-                position,
-                data: { ...initNode(nodeData, newNodeId, true), label: newNodeLabel }
-            }
-
-            if (nodeData.type === 'Iteration') {
-                newNode.type = 'iteration'
-            } else if (nodeData.type === 'StickyNote') {
-                newNode.type = 'stickyNote'
-            } else {
-                newNode.type = 'agentFlow'
-            }
-
-            // Check if the dropped node is within any Iteration node's flowContainerSize
-            const iterationNodes = nodes.filter((node) => node.type === 'iteration')
-            let parentNode = null
-
-            for (const iterationNode of iterationNodes) {
-                // Get the iteration node's position and dimensions
-                const nodeWidth = iterationNode.width || 300
-                const nodeHeight = iterationNode.height || 250
-
-                // Calculate the boundaries of the iteration node
-                const nodeLeft = iterationNode.position.x
-                const nodeRight = nodeLeft + nodeWidth
-                const nodeTop = iterationNode.position.y
-                const nodeBottom = nodeTop + nodeHeight
-
-                // Check if the dropped position is within these boundaries
-                if (position.x >= nodeLeft && position.x <= nodeRight && position.y >= nodeTop && position.y <= nodeBottom) {
-                    parentNode = iterationNode
-
-                    // We can't have nested iteration nodes
-                    if (nodeData.name === 'iterationAgentflow') {
-                        enqueueSnackbar({
-                            message: 'Nested iteration node is not supported yet',
-                            options: {
-                                key: new Date().getTime() + Math.random(),
-                                variant: 'error',
-                                persist: true,
-                                action: (key) => (
-                                    <Button style={{ color: 'white' }} onClick={() => closeSnackbar(key)}>
-                                        <IconX />
-                                    </Button>
-                                )
-                            }
-                        })
-                        return
-                    }
-
-                    // We can't have human input node inside iteration node
-                    if (nodeData.name === 'humanInputAgentflow') {
-                        enqueueSnackbar({
-                            message: 'Human input node is not supported inside Iteration node',
-                            options: {
-                                key: new Date().getTime() + Math.random(),
-                                variant: 'error',
-                                persist: true,
-                                action: (key) => (
-                                    <Button style={{ color: 'white' }} onClick={() => closeSnackbar(key)}>
-                                        <IconX />
-                                    </Button>
-                                )
-                            }
-                        })
-                        return
-                    }
-                    break
-                }
-            }
-
-            // If the node is dropped inside an iteration node, set its parent
-            if (parentNode) {
-                newNode.parentNode = parentNode.id
-                newNode.extent = 'parent'
-                // Adjust position to be relative to the parent
-                newNode.position = {
-                    x: position.x - parentNode.position.x,
-                    y: position.y - parentNode.position.y
-                }
-            }
-
-            setSelectedNode(newNode)
-            setNodesWithHistory(
-                nodes.concat(newNode).map((node) => {
-                    if (node.id === newNode.id) {
-                        node.data = {
-                            ...node.data,
-                            selected: true
-                        }
-                    } else {
-                        node.data = {
-                            ...node.data,
-                            selected: false
-                        }
-                    }
-
-                    return node
-                }),
-                'Node dropped'
-            )
-            setTimeout(() => setDirty(), 0)
-        },
-
-        // eslint-disable-next-line
-        [reactFlowInstance]
-    )
 
     const syncNodes = () => {
         const componentNodes = canvas.componentNodes
@@ -529,11 +363,18 @@ const AgentflowCanvas = ({ chatflowId: propChatflowId }) => {
             }
         }
 
-        setNodesWithHistory(cloneNodes, 'Synced nodes')
-        setEdgesWithHistory(
-            cloneEdges.filter((edge) => !toBeRemovedEdges.includes(edge)),
-            'Synced nodes'
-        )
+        const oldState = { nodes, edges }
+        const newEdges = cloneEdges.filter((edge) => !toBeRemovedEdges.includes(edge))
+
+        setNodes(cloneNodes)
+        setEdges(newEdges)
+
+        // Add to history
+        pushHistory('sync_nodes', cloneNodes, newEdges, oldState, {
+            description: 'Synced nodes with latest versions',
+            source: 'system'
+        })
+
         setDirty()
         setIsSyncNodesButtonEnabled(false)
     }
@@ -555,12 +396,12 @@ const AgentflowCanvas = ({ chatflowId: propChatflowId }) => {
     }
 
     const saveChatflowSuccess = () => {
-        dispatch({ type: REMOVE_DIRTY })
         enqueueSnackbar({
-            message: `${canvasTitle} saved`,
+            message: `${canvasTitle} saved successfully!`,
             options: {
                 key: new Date().getTime() + Math.random(),
                 variant: 'success',
+                persist: false,
                 action: (key) => (
                     <Button style={{ color: 'white' }} onClick={() => closeSnackbar(key)}>
                         <IconX />
@@ -568,6 +409,7 @@ const AgentflowCanvas = ({ chatflowId: propChatflowId }) => {
                 )
             }
         })
+        triggerConfetti()
     }
 
     const errorFailed = (message) => {
@@ -586,24 +428,170 @@ const AgentflowCanvas = ({ chatflowId: propChatflowId }) => {
         })
     }
 
-    const setDirty = () => {
-        dispatch({ type: SET_DIRTY })
-    }
-
     const checkIfSyncNodesAvailable = (nodes) => {
         const componentNodes = canvas.componentNodes
-
-        for (let i = 0; i < nodes.length; i++) {
-            const node = nodes[i]
+        for (const node of nodes) {
             const componentNode = componentNodes.find((cn) => cn.name === node.data.name)
             if (componentNode && componentNode.version > node.data.version) {
                 setIsSyncNodesButtonEnabled(true)
                 return
             }
         }
-
         setIsSyncNodesButtonEnabled(false)
     }
+
+    // Enhanced undo/redo handlers
+    const handleUndo = () => {
+        const previousState = undo()
+        if (previousState) {
+            setNodes(previousState.nodes)
+            setEdges(previousState.edges)
+            setDirty()
+        }
+    }
+
+    const handleRedo = () => {
+        const nextState = redo()
+        if (nextState) {
+            setNodes(nextState.nodes)
+            setEdges(nextState.edges)
+            setDirty()
+        }
+    }
+
+    const handleRestore = (entry) => {
+        setNodes(entry.nodes)
+        setEdges(entry.edges)
+        setDirty()
+    }
+
+    const handleClearHistory = () => {
+        clearHistory()
+        enqueueSnackbar({
+            message: 'History cleared successfully',
+            options: {
+                key: new Date().getTime() + Math.random(),
+                variant: 'success',
+                persist: false
+            }
+        })
+    }
+
+    // Track node deletion
+    const handleNodeDelete = useCallback(
+        (nodeId) => {
+            const oldState = { nodes, edges }
+            const deletedNode = nodes.find((node) => node.id === nodeId)
+            const newNodes = nodes.filter((node) => node.id !== nodeId)
+            const newEdges = edges.filter((edge) => edge.source !== nodeId && edge.target !== nodeId)
+
+            setNodes(newNodes)
+            setEdges(newEdges)
+
+            // Add to history
+            pushHistory('delete_nodes', newNodes, newEdges, oldState, {
+                description: `Deleted ${deletedNode?.data?.label || deletedNode?.type || 'node'}`,
+                source: 'manual',
+                deletedNode
+            })
+
+            setDirty()
+        },
+        [nodes, edges, pushHistory]
+    )
+
+    // Track node modification
+    const handleNodeModify = useCallback(
+        (nodeId, newData) => {
+            const oldState = { nodes, edges }
+            const newNodes = nodes.map((node) => (node.id === nodeId ? { ...node, data: { ...node.data, ...newData } } : node))
+
+            setNodes(newNodes)
+
+            // Add to history
+            pushHistory('modify_nodes', newNodes, edges, oldState, {
+                description: `Modified ${newData.label || 'node'}`,
+                source: 'manual',
+                modifiedNodeId: nodeId,
+                changes: newData
+            })
+
+            setDirty()
+        },
+        [nodes, edges, pushHistory]
+    )
+
+    // Track edge deletion
+    const handleEdgeDelete = useCallback(
+        (edgeId) => {
+            const oldState = { nodes, edges }
+            const deletedEdge = edges.find((edge) => edge.id === edgeId)
+            const newEdges = edges.filter((edge) => edge.id !== edgeId)
+
+            setEdges(newEdges)
+
+            // Add to history
+            pushHistory('delete_edges', nodes, newEdges, oldState, {
+                description: `Deleted connection from ${deletedEdge?.source} to ${deletedEdge?.target}`,
+                source: 'manual',
+                deletedEdge
+            })
+
+            setDirty()
+        },
+        [nodes, edges, pushHistory]
+    )
+
+    // Track node dragging
+    const handleNodeDragStop = useCallback(
+        (event, node) => {
+            const oldState = { nodes, edges }
+            const newNodes = nodes.map((n) => (n.id === node.id ? { ...n, position: node.position } : n))
+
+            setNodes(newNodes)
+
+            // Add to history (only if position actually changed)
+            const originalNode = oldState.nodes.find((n) => n.id === node.id)
+            if (originalNode && (originalNode.position.x !== node.position.x || originalNode.position.y !== node.position.y)) {
+                pushHistory('move_nodes', newNodes, edges, oldState, {
+                    description: `Moved ${node.data?.label || 'node'}`,
+                    source: 'drag',
+                    movedNodeId: node.id,
+                    oldPosition: originalNode.position,
+                    newPosition: node.position
+                })
+            }
+
+            setDirty()
+        },
+        [nodes, edges, pushHistory]
+    )
+
+    // Set enhanced context value after handlers are defined
+    useEffect(() => {
+        setEnhancedFlowContextValue({
+            ...flowContextValue,
+            onNodeDelete: handleNodeDelete,
+            onNodeModify: handleNodeModify,
+            onEdgeDelete: handleEdgeDelete,
+            onNodeDragStop: handleNodeDragStop
+        })
+    }, [flowContextValue, handleNodeDelete, handleNodeModify, handleEdgeDelete, handleNodeDragStop])
+
+    // Keyboard shortcuts for undo/redo
+    useEffect(() => {
+        const handleKeyDown = (e) => {
+            if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
+                e.preventDefault()
+                handleUndo()
+            } else if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) {
+                e.preventDefault()
+                handleRedo()
+            }
+        }
+        window.addEventListener('keydown', handleKeyDown)
+        return () => window.removeEventListener('keydown', handleKeyDown)
+    }, [canUndo, canRedo, handleUndo, handleRedo])
 
     // ==============================|| useEffect ||============================== //
 
@@ -612,14 +600,20 @@ const AgentflowCanvas = ({ chatflowId: propChatflowId }) => {
         if (getSpecificChatflowApi.data) {
             const chatflow = getSpecificChatflowApi.data
             const initialFlow = chatflow.flowData ? JSON.parse(chatflow.flowData) : []
-            setNodesWithHistory(initialFlow.nodes || [], 'Loaded flow')
-            setEdgesWithHistory(initialFlow.edges || [], 'Loaded flow')
+
+            setNodes(initialFlow.nodes || [])
+            setEdges(initialFlow.edges || [])
+
+            // Add to history
+            pushHistory('load_flow', initialFlow.nodes || [], initialFlow.edges || [], null, {
+                description: `Loaded ${chatflow.name}`,
+                source: 'load'
+            })
+
             dispatch({ type: SET_CHATFLOW, chatflow })
         } else if (getSpecificChatflowApi.error) {
             errorFailed(`Failed to retrieve ${canvasTitle}: ${getSpecificChatflowApi.error.response.data.message}`)
         }
-
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [getSpecificChatflowApi.data, getSpecificChatflowApi.error])
 
     // Create new chatflow successful
@@ -632,8 +626,6 @@ const AgentflowCanvas = ({ chatflowId: propChatflowId }) => {
         } else if (createNewChatflowApi.error) {
             errorFailed(`Failed to save ${canvasTitle}: ${createNewChatflowApi.error.response.data.message}`)
         }
-
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [createNewChatflowApi.data, createNewChatflowApi.error])
 
     // Update chatflow successful
@@ -644,8 +636,6 @@ const AgentflowCanvas = ({ chatflowId: propChatflowId }) => {
         } else if (updateChatflowApi.error) {
             errorFailed(`Failed to save ${canvasTitle}: ${updateChatflowApi.error.response.data.message}`)
         }
-
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [updateChatflowApi.data, updateChatflowApi.error])
 
     useEffect(() => {
@@ -654,8 +644,6 @@ const AgentflowCanvas = ({ chatflowId: propChatflowId }) => {
             const flowData = canvasDataStore.chatflow.flowData ? JSON.parse(canvasDataStore.chatflow.flowData) : []
             checkIfSyncNodesAvailable(flowData.nodes || [])
         }
-
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [canvasDataStore.chatflow])
 
     // Initialization
@@ -668,8 +656,14 @@ const AgentflowCanvas = ({ chatflowId: propChatflowId }) => {
                 handleLoadFlow(localStorage.getItem('duplicatedFlowData'))
                 setTimeout(() => localStorage.removeItem('duplicatedFlowData'), 0)
             } else {
-                setNodesWithHistory([], 'Initial state')
-                setEdgesWithHistory([], 'Initial state')
+                setNodes([])
+                setEdges([])
+
+                // Add initial state to history
+                pushHistory('initial_state', [], [], null, {
+                    description: 'Initial empty state',
+                    source: 'system'
+                })
             }
             dispatch({
                 type: SET_CHATFLOW,
@@ -685,8 +679,6 @@ const AgentflowCanvas = ({ chatflowId: propChatflowId }) => {
         return () => {
             setTimeout(() => dispatch({ type: REMOVE_DIRTY }), 0)
         }
-
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [])
 
     useEffect(() => {
@@ -707,16 +699,12 @@ const AgentflowCanvas = ({ chatflowId: propChatflowId }) => {
         return () => {
             window.removeEventListener('paste', handlePaste)
         }
-
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [])
 
     useEffect(() => {
         if (templateFlowData && templateFlowData.includes('"nodes":[') && templateFlowData.includes('],"edges":[')) {
             handleLoadFlow(templateFlowData)
         }
-
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [templateFlowData])
 
     usePrompt('You have unsaved changes! Do you want to navigate away?', canvasDataStore.isDirty)
@@ -738,34 +726,35 @@ const AgentflowCanvas = ({ chatflowId: propChatflowId }) => {
                         label: 'Start'
                     }
                 }
-                setNodesWithHistory([startNode], 'Initial state')
-                setEdgesWithHistory([], 'Initial state')
+
+                setNodes([startNode])
+                setEdges([])
+
+                // Add to history
+                pushHistory('add_nodes', [startNode], [], null, {
+                    description: 'Added start node',
+                    source: 'system'
+                })
             }
         }
-
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [getNodesApi.data, chatflowId])
 
     const [isPanelOpen, setPanelOpen] = useState(true)
     const [historyModalOpen, setHistoryModalOpen] = useState(false)
 
     // Handler for CanvasHeader
-    const handleOpenHistoryModal = () => setHistoryModalOpen(true)
-    const handleCloseHistoryModal = () => setHistoryModalOpen(false)
-
-    // Initialize history on mount
-    useEffect(() => {
-        setHistory([
-            {
-                nodes: nodes,
-                edges: edges,
-                timestamp: dayjs().format('YYYY-MM-DD HH:mm:ss'),
-                label: 'Initial state'
-            }
-        ])
-        setHistoryIndex(0)
-        // eslint-disable-next-line
-    }, [])
+    const handleOpenHistoryModal = () => {
+        console.log('📚 [AGENTFLOW_CANVAS] History Modal Opened:', {
+            timestamp: new Date().toISOString()
+        })
+        setHistoryModalOpen(true)
+    }
+    const handleCloseHistoryModal = () => {
+        console.log('📚 [AGENTFLOW_CANVAS] History Modal Closed:', {
+            timestamp: new Date().toISOString()
+        })
+        setHistoryModalOpen(false)
+    }
 
     return (
         <>
@@ -783,10 +772,8 @@ const AgentflowCanvas = ({ chatflowId: propChatflowId }) => {
                     background: 'transparent'
                 }}
             />
-
-            <Box sx={{ display: 'flex', height: '100%' }}>
-                <AgentflowGeneratorPanel open={isPanelOpen} onClose={() => setPanelOpen(false)} />
-                <Box sx={{ flex: 1, position: 'relative' }}>
+            <Box sx={{ display: 'flex', height: '100vh' }}>
+                <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
                     <AppBar
                         enableColorOnDark
                         position='fixed'
@@ -808,106 +795,124 @@ const AgentflowCanvas = ({ chatflowId: propChatflowId }) => {
                             />
                         </Toolbar>
                     </AppBar>
-                    <Box sx={{ pt: '70px', height: '100vh', width: '100%' }}>
+                    <Box sx={{ pt: '70px', height: '100%', width: '100%' }}>
                         <div className='reactflow-parent-wrapper'>
                             <div className='reactflow-wrapper' ref={reactFlowWrapper}>
-                                <ReactFlow
-                                    nodes={nodes}
-                                    edges={edges}
-                                    onNodesChange={onNodesChange}
-                                    onNodeClick={onNodeClick}
-                                    onNodeDoubleClick={onNodeDoubleClick}
-                                    onEdgesChange={onEdgesChange}
-                                    onDrop={onDrop}
-                                    onDragOver={onDragOver}
-                                    onNodeDragStop={setDirty}
-                                    nodeTypes={nodeTypes}
-                                    edgeTypes={edgeTypes}
-                                    onConnect={onConnect}
-                                    onInit={setReactFlowInstance}
-                                    fitView
-                                    deleteKeyCode={canvas.canvasDialogShow ? null : ['Delete']}
-                                    minZoom={0.5}
-                                    snapGrid={[25, 25]}
-                                    snapToGrid={isSnappingEnabled}
-                                    connectionLineComponent={ConnectionLine}
-                                >
-                                    <Controls
-                                        className={customization.isDarkMode ? 'dark-mode-controls' : ''}
-                                        style={{
-                                            display: 'flex',
-                                            flexDirection: 'row',
-                                            left: '50%',
-                                            transform: 'translate(-50%, -50%)'
-                                        }}
+                                <flowContext.Provider value={enhancedFlowContextValue}>
+                                    <ReactFlow
+                                        nodes={nodes}
+                                        edges={edges}
+                                        onNodesChange={onNodesChange}
+                                        onNodeClick={onNodeClick}
+                                        onNodeDoubleClick={onNodeDoubleClick}
+                                        onEdgesChange={onEdgesChange}
+                                        onDrop={onDrop}
+                                        onDragOver={onDragOver}
+                                        onNodeDragStop={handleNodeDragStop}
+                                        nodeTypes={nodeTypes}
+                                        edgeTypes={edgeTypes}
+                                        onConnect={onConnect}
+                                        onInit={setReactFlowInstance}
+                                        fitView
+                                        deleteKeyCode={canvas.canvasDialogShow ? null : ['Delete']}
+                                        minZoom={0.5}
+                                        snapGrid={[25, 25]}
+                                        snapToGrid={isSnappingEnabled}
+                                        connectionLineComponent={ConnectionLine}
                                     >
-                                        <button
-                                            className='react-flow__controls-button react-flow__controls-interactive'
-                                            onClick={() => {
-                                                setIsSnappingEnabled(!isSnappingEnabled)
+                                        <Controls
+                                            className={customization.isDarkMode ? 'dark-mode-controls' : ''}
+                                            style={{
+                                                display: 'flex',
+                                                flexDirection: 'row',
+                                                left: '50%',
+                                                transform: 'translate(-50%, -50%)'
                                             }}
-                                            title='toggle snapping'
-                                            aria-label='toggle snapping'
                                         >
-                                            {isSnappingEnabled ? <IconMagnetFilled /> : <IconMagnetOff />}
-                                        </button>
-                                    </Controls>
-                                    <MiniMap
-                                        nodeStrokeWidth={3}
-                                        nodeColor={customization.isDarkMode ? '#2d2d2d' : '#e2e2e2'}
-                                        nodeStrokeColor={customization.isDarkMode ? '#525252' : '#fff'}
-                                        maskColor={customization.isDarkMode ? 'rgb(45, 45, 45, 0.6)' : 'rgb(240, 240, 240, 0.6)'}
-                                        style={{
-                                            backgroundColor: customization.isDarkMode ? theme.palette.background.default : '#fff'
-                                        }}
-                                    />
-                                    <Background color='#aaa' gap={16} />
-                                    <AddNodes
-                                        isAgentCanvas={true}
-                                        isAgentflowv2={true}
-                                        nodesData={getNodesApi.data}
-                                        node={selectedNode}
-                                        onFlowGenerated={triggerConfetti}
-                                    />
-                                    <EditNodeDialog
-                                        show={editNodeDialogOpen}
-                                        dialogProps={editNodeDialogProps}
-                                        onCancel={() => setEditNodeDialogOpen(false)}
-                                    />
-                                    {isSyncNodesButtonEnabled && (
-                                        <Fab
-                                            sx={{
-                                                left: 60,
-                                                top: 20,
-                                                color: 'white',
-                                                background: 'orange',
-                                                '&:hover': {
+                                            <button
+                                                className='react-flow__controls-button react-flow__controls-interactive'
+                                                onClick={() => {
+                                                    setIsSnappingEnabled(!isSnappingEnabled)
+                                                }}
+                                                title='toggle snapping'
+                                                aria-label='toggle snapping'
+                                            >
+                                                {isSnappingEnabled ? <IconMagnetFilled /> : <IconMagnetOff />}
+                                            </button>
+                                        </Controls>
+                                        <MiniMap
+                                            nodeStrokeWidth={3}
+                                            nodeColor={customization.isDarkMode ? '#2d2d2d' : '#e2e2e2'}
+                                            nodeStrokeColor={customization.isDarkMode ? '#525252' : '#fff'}
+                                            maskColor={customization.isDarkMode ? 'rgb(45, 45, 45, 0.6)' : 'rgb(240, 240, 240, 0.6)'}
+                                            style={{
+                                                backgroundColor: customization.isDarkMode ? theme.palette.background.default : '#fff'
+                                            }}
+                                        />
+                                        <Background color='#aaa' gap={16} />
+                                        <AddNodes
+                                            isAgentCanvas={true}
+                                            isAgentflowv2={true}
+                                            nodesData={getNodesApi.data}
+                                            node={selectedNode}
+                                            onFlowGenerated={triggerConfetti}
+                                        />
+                                        <EditNodeDialog
+                                            show={editNodeDialogOpen}
+                                            dialogProps={editNodeDialogProps}
+                                            onCancel={() => setEditNodeDialogOpen(false)}
+                                        />
+                                        {isSyncNodesButtonEnabled && (
+                                            <Fab
+                                                sx={{
+                                                    left: 60,
+                                                    top: 20,
+                                                    color: 'white',
                                                     background: 'orange',
-                                                    backgroundImage: `linear-gradient(rgb(0 0 0/10%) 0 0)`
-                                                }
-                                            }}
-                                            size='small'
-                                            aria-label='sync'
-                                            title='Sync Nodes'
-                                            onClick={() => syncNodes()}
-                                        >
-                                            <IconRefreshAlert />
-                                        </Fab>
-                                    )}
-                                    <ChatPopUp isAgentCanvas={true} chatflowid={chatflowId} onOpenChange={setChatPopupOpen} />
-                                    {!chatPopupOpen && <ValidationPopUp isAgentCanvas={true} chatflowid={chatflowId} />}
-                                </ReactFlow>
+                                                    '&:hover': {
+                                                        background: 'orange',
+                                                        backgroundImage: `linear-gradient(rgb(0 0 0/10%) 0 0)`
+                                                    }
+                                                }}
+                                                size='small'
+                                                aria-label='sync'
+                                                title='Sync Nodes'
+                                                onClick={() => syncNodes()}
+                                            >
+                                                <IconRefreshAlert />
+                                            </Fab>
+                                        )}
+                                        <ChatPopUp isAgentCanvas={true} chatflowid={chatflowId} onOpenChange={setChatPopupOpen} />
+                                        {!chatPopupOpen && <ValidationPopUp isAgentCanvas={true} chatflowid={chatflowId} />}
+                                    </ReactFlow>
+                                </flowContext.Provider>
                             </div>
                         </div>
                     </Box>
                     <ConfirmDialog />
                 </Box>
+                {/* Agentflow Generator Panel */}
+                <AgentflowGeneratorPanel
+                    open={isPanelOpen}
+                    onClose={() => {
+                        console.log('❌ [AGENTFLOW_CANVAS] Panel Close Triggered:', {
+                            timestamp: new Date().toISOString()
+                        })
+                        setPanelOpen(false)
+                    }}
+                />
+
                 {/* Show floating button when panel is collapsed */}
                 {!isPanelOpen && (
                     <Fab
                         color='primary'
                         aria-label='open-generator-panel'
-                        onClick={() => setPanelOpen(true)}
+                        onClick={() => {
+                            console.log('🎯 [AGENTFLOW_CANVAS] Panel Open Button Clicked:', {
+                                timestamp: new Date().toISOString()
+                            })
+                            setPanelOpen(true)
+                        }}
                         sx={{
                             position: 'fixed',
                             bottom: 32,
@@ -919,63 +924,18 @@ const AgentflowCanvas = ({ chatflowId: propChatflowId }) => {
                         <IconWand />
                     </Fab>
                 )}
-                <Modal open={historyModalOpen} onClose={handleCloseHistoryModal}>
-                    <Box
-                        sx={{
-                            position: 'absolute',
-                            top: '50%',
-                            left: '50%',
-                            transform: 'translate(-50%, -50%)',
-                            width: 400,
-                            bgcolor: 'background.paper',
-                            boxShadow: 24,
-                            p: 3,
-                            borderRadius: 2,
-                            maxHeight: 500,
-                            overflowY: 'auto'
-                        }}
-                    >
-                        <Typography variant='h6' sx={{ mb: 2, display: 'flex', alignItems: 'center' }}>
-                            <IconHistory style={{ marginRight: 8 }} /> History
-                        </Typography>
-                        <Box sx={{ display: 'flex', gap: 1, mb: 2 }}>
-                            <Button variant='outlined' startIcon={<IconArrowBackUp />} onClick={undo} disabled={historyIndex === 0}>
-                                Undo
-                            </Button>
-                            <Button
-                                variant='outlined'
-                                startIcon={<IconArrowForwardUp />}
-                                onClick={redo}
-                                disabled={historyIndex === history.length - 1}
-                            >
-                                Redo
-                            </Button>
-                        </Box>
-                        <List dense>
-                            {history.map((entry, idx) => (
-                                <ListItem key={idx} disablePadding>
-                                    <ListItemButton
-                                        selected={idx === historyIndex}
-                                        onClick={() => {
-                                            setNodes(entry.nodes)
-                                            setEdges(entry.edges)
-                                            setHistoryIndex(idx)
-                                        }}
-                                    >
-                                        <ListItemText
-                                            primary={entry.label}
-                                            secondary={entry.timestamp}
-                                            primaryTypographyProps={{ fontWeight: idx === historyIndex ? 700 : 400 }}
-                                        />
-                                    </ListItemButton>
-                                </ListItem>
-                            ))}
-                        </List>
-                        <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 2 }}>
-                            <Button onClick={handleCloseHistoryModal}>Close</Button>
-                        </Box>
-                    </Box>
-                </Modal>
+
+                {/* Enhanced History Modal */}
+                <EnhancedHistoryModal
+                    open={historyModalOpen}
+                    onClose={handleCloseHistoryModal}
+                    history={history}
+                    historyIndex={historyIndex}
+                    onUndo={handleUndo}
+                    onRedo={handleRedo}
+                    onRestore={handleRestore}
+                    onClearHistory={handleClearHistory}
+                />
             </Box>
         </>
     )

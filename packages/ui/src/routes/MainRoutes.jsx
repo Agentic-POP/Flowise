@@ -96,6 +96,7 @@ const WorkflowsPage = Loadable(lazy(() => import('@/views/workflows/WorkflowsPag
 
 // chat page routing
 const Chat = Loadable(lazy(() => import('@/views/chat')))
+const ChatV2 = Loadable(lazy(() => import('@/views/chat-v2')))
 
 // ==============================|| MAIN ROUTING ||============================== //
 
@@ -408,6 +409,14 @@ const MainRoutes = {
             element: (
                 <RequireAuth permission={'agentflows:view'}>
                     <Chat />
+                </RequireAuth>
+            )
+        },
+        {
+            path: '/chat-v2',
+            element: (
+                <RequireAuth permission={'agentflows:view'}>
+                    <ChatV2 />
                 </RequireAuth>
             )
         }

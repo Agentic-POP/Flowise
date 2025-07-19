@@ -9,5 +9,6 @@ router.use((req, res, next) => {
 })
 
 router.post('/generate', agentflowv2GeneratorController.generateAgentflowv2)
+router.post('/conversational', agentflowv2GeneratorController.processConversationalRequest)
 
 export default router

@@ -96,6 +96,15 @@ const dashboard = {
                     permission: 'agentflows:view'
                 },
                 {
+                    id: 'chat-v2',
+                    title: 'Chat V2 (Beta)',
+                    type: 'item',
+                    url: '/chat-v2',
+                    icon: icons.IconMessage,
+                    breadcrumbs: true,
+                    permission: 'agentflows:view'
+                },
+                {
                     id: 'executions',
                     title: 'Executions',
                     type: 'item',

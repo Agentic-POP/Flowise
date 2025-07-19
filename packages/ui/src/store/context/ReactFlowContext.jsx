@@ -11,7 +11,12 @@ const initialValue = {
     duplicateNode: () => {},
     deleteNode: () => {},
     deleteEdge: () => {},
-    onNodeDataChange: () => {}
+    onNodeDataChange: () => {},
+    // Enhanced history callbacks
+    onNodeDelete: () => {},
+    onNodeModify: () => {},
+    onEdgeDelete: () => {},
+    onNodeDragStop: () => {}
 }
 
 export const flowContext = createContext(initialValue)
@@ -201,67 +206,25 @@ export const ReactFlowContext = ({ children }) => {
                 selected: false
             }
 
-            const inputKeys = ['inputParams', 'inputAnchors']
-            for (const key of inputKeys) {
-                for (const item of duplicatedNode.data[key]) {
-                    if (item.id) {
-                        item.id = item.id.replace(id, newNodeId)
-                    }
-                }
-            }
-
-            const outputKeys = ['outputAnchors']
-            for (const key of outputKeys) {
-                for (const item of duplicatedNode.data[key]) {
-                    if (item.id) {
-                        item.id = item.id.replace(id, newNodeId)
-                    }
-                    if (item.options) {
-                        for (const output of item.options) {
-                            output.id = output.id.replace(id, newNodeId)
-                        }
-                    }
-                }
-            }
-
-            // Clear connected inputs
-            for (const inputName in duplicatedNode.data.inputs) {
-                if (
-                    typeof duplicatedNode.data.inputs[inputName] === 'string' &&
-                    duplicatedNode.data.inputs[inputName].startsWith('{{') &&
-                    duplicatedNode.data.inputs[inputName].endsWith('}}')
-                ) {
-                    duplicatedNode.data.inputs[inputName] = ''
-                } else if (Array.isArray(duplicatedNode.data.inputs[inputName])) {
-                    duplicatedNode.data.inputs[inputName] = duplicatedNode.data.inputs[inputName].filter(
-                        (item) => !(typeof item === 'string' && item.startsWith('{{') && item.endsWith('}}'))
-                    )
-                }
-            }
-
-            reactFlowInstance.setNodes([...nodes, duplicatedNode])
+            reactFlowInstance.setNodes((nds) => [...nds, duplicatedNode])
             dispatch({ type: SET_DIRTY })
         }
     }
 
-    return (
-        <flowContext.Provider
-            value={{
-                reactFlowInstance,
-                setReactFlowInstance,
-                deleteNode,
-                deleteEdge,
-                duplicateNode,
-                onAgentflowNodeStatusUpdate,
-                clearAgentflowNodeStatus,
-                onNodeDataChange
-            }}
-        >
-            {children}
-        </flowContext.Provider>
-    )
+    const value = {
+        reactFlowInstance,
+        setReactFlowInstance,
+        duplicateNode,
+        deleteNode,
+        deleteEdge,
+        onNodeDataChange,
+        onAgentflowNodeStatusUpdate,
+        clearAgentflowNodeStatus
+    }
+
+    return <flowContext.Provider value={value}>{children}</flowContext.Provider>
 }
 
 ReactFlowContext.propTypes = {
-    children: PropTypes.any
+    children: PropTypes.node
 }

@@ -39,6 +39,11 @@ export const ConfigProvider = ({ children }) => {
             })
             .catch((error) => {
                 console.error('Error fetching data:', error)
+                // Set default values when API fails
+                setConfig({})
+                setOpenSource(true) // Default to open source
+                setEnterpriseLicensed(false)
+                setCloudLicensed(false)
                 setLoading(false)
             })
     }, [])

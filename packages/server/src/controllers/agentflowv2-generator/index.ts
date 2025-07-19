@@ -1,7 +1,64 @@
 import { Request, Response, NextFunction } from 'express'
 import agentflowv2Service from '../../services/agentflowv2-generator'
 import logger from '../../utils/logger'
+import { processUserMessageWithAI } from '../../services/agentflowv2-generator'
 
+// Remove processUserMessageWithAI and helper functions from this file.
+
+// All the old handler functions are now replaced by the single AI model call
+// The AI model handles all response types internally based on context
+
+// The complete workflow functionality is now handled by the single AI model call
+// The AI model can determine when to create complete workflows based on user intent
+
+// Helper functions for complete workflow
+// All helper functions are now handled by the single AI model call
+// The AI model has access to all context and can perform any needed operations
+
+// All helper functions are now handled by the single AI model call
+// The AI model has access to all context and can perform any needed operations
+
+// Main conversational request handler - simplified with single AI call
+const processConversationalRequest = async (req: Request, res: Response, next: NextFunction) => {
+    const debugLogs: string[] = []
+    try {
+        console.log('Conversational controller hit', req.body)
+        logger.info(`[conversational-controller]: Request received. Body: ${JSON.stringify(req.body)}`)
+        debugLogs.push('[conversational-controller]: Request received. Body keys: ' + Object.keys(req.body))
+
+        const { message, sessionId, currentFlow, selectedChatModel } = req.body
+
+        if (!message || !selectedChatModel) {
+            logger.error('[conversational-controller]: Missing message or selectedChatModel')
+            debugLogs.push('[conversational-controller]: Missing message or selectedChatModel')
+            return res.status(400).json({ error: 'Message and selectedChatModel are required', debugLogs })
+        }
+
+        // Single AI model call with full context
+        logger.info(`[conversational-controller]: Processing message with AI: "${message}"`)
+        debugLogs.push(`[conversational-controller]: Processing message with AI: "${message}"`)
+
+        const response = await processUserMessageWithAI(message, currentFlow, selectedChatModel)
+
+        logger.info(`[conversational-controller]: AI response: ${JSON.stringify(response)}`)
+        debugLogs.push(`[conversational-controller]: AI response type: ${response.type}`)
+
+        // Return response with debug logs
+        const responseToSend = { ...response, debugLogs }
+        return res.json(responseToSend)
+    } catch (error) {
+        logger.error('[conversational-controller]: General error:', error)
+        const errorMessage = error instanceof Error ? error.message : String(error)
+        debugLogs.push('[conversational-controller]: General error: ' + errorMessage)
+        return res.status(500).json({
+            error: 'Conversational processing failed',
+            details: errorMessage,
+            debugLogs
+        })
+    }
+}
+
+// Keep the original function for backward compatibility
 const generateAgentflowv2 = async (req: Request, res: Response, next: NextFunction) => {
     const debugLogs: string[] = []
     try {
@@ -79,5 +136,6 @@ const generateAgentflowv2 = async (req: Request, res: Response, next: NextFuncti
 }
 
 export default {
-    generateAgentflowv2
+    generateAgentflowv2,
+    processConversationalRequest
 }
