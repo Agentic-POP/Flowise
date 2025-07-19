@@ -10,9 +10,7 @@ import { sysPrompt, cursorPrompt } from './prompt'
 import { databaseEntities } from '../../utils'
 import logger from '../../utils/logger'
 import { MODE } from '../../Interface'
-import { FlowAnalyzer } from './flowAnalyzer'
-import { IntentParser } from './intentParser'
-import { SmartModifier, FlowState } from './smartModifier'
+import { FlowState } from './smartModifier'
 
 // Define the Zod schema for Agentflowv2 data structure
 const NodeType = z.object({
@@ -201,11 +199,30 @@ const generateAgentflowv2 = async (
     cursorMode: boolean = false
 ) => {
     try {
+        logger.info(`[service]: generateAgentflowv2 called. cursorMode=${cursorMode}`)
+        logger.info(`[service]: INPUT question: ${question}`)
+        logger.info(`[service]: INPUT selectedChatModel: ${JSON.stringify(selectedChatModel)}`)
         const agentFlow2Nodes = await getAllAgentFlow2Nodes()
         const toolNodes = await getAllToolNodes()
         const marketplaceTemplates = await getAllAgentflowv2Marketplaces()
 
         if (cursorMode && currentFlow) {
+            logger.info('[service]: Running in cursor mode')
+            // Step 1: Add aiModelCalls array
+            const aiModelCalls = []
+            // Serialization-safe logging of currentFlow
+            try {
+                logger.info('[service]: currentFlow keys: ' + Object.keys(currentFlow))
+                logger.info(
+                    '[service]: currentFlow.nodes keys: ' + (currentFlow.nodes ? currentFlow.nodes.map((n) => n.id).join(',') : 'undefined')
+                )
+                logger.info(
+                    '[service]: currentFlow.edges keys: ' + (currentFlow.edges ? currentFlow.edges.map((e) => e.id).join(',') : 'undefined')
+                )
+                logger.info('[service]: currentFlow (stringified): ' + JSON.stringify(currentFlow))
+            } catch (e) {
+                logger.error('[service]: Failed to stringify currentFlow', e)
+            }
             // --- LLM-powered cursor mode ---
             const prompt = cursorPrompt
                 .replace('{currentFlowState}', JSON.stringify(currentFlow, null, 2))
@@ -213,13 +230,12 @@ const generateAgentflowv2 = async (
                 .replace('{availableNodes}', agentFlow2Nodes)
                 .replace('{marketplaceTemplates}', marketplaceTemplates)
                 .replace('{flowAnalysis}', '') // Optionally add flow analysis
-
+            logger.debug('[service]: Cursor mode prompt:', prompt)
             const options: Record<string, any> = {
                 appDataSource: getRunningExpressApp().AppDataSource,
                 databaseEntities: databaseEntities,
                 logger: logger
             }
-
             let response
             if (process.env.MODE === MODE.QUEUE) {
                 const predictionQueue = getRunningExpressApp().queueManager.getQueue('prediction')
@@ -234,38 +250,116 @@ const generateAgentflowv2 = async (
                 const queueEvents = predictionQueue.getQueueEvents()
                 response = await job.waitUntilFinished(queueEvents)
             } else {
+                logger.info('[service]: Calling LLM for cursor mode')
+                // Step 1: Log AI model input
+                const aiInput = { prompt, selectedChatModel, question }
                 response = await generateAgentflowv2_json(
                     { prompt, componentNodes: getRunningExpressApp().nodesPool.componentNodes, toolNodes, selectedChatModel },
                     question,
                     options
                 )
+                // Step 1: Log AI model output
+                aiModelCalls.push({ input: aiInput, output: response })
+            }
+            logger.info('[service]: LLM response received (cursor mode)')
+            logger.info('[service]: LLM response type:', typeof response)
+            logger.info('[service]: LLM response is null/undefined:', response === null || response === undefined)
+
+            // Check if the response contains an error
+            if (response && typeof response === 'object' && response.error) {
+                logger.error('[service]: LLM returned error:', response.error)
+                return {
+                    success: false,
+                    error: response.error,
+                    reasoning: 'The AI model encountered an error while processing your request.',
+                    aiModelCalls
+                }
             }
 
+            // Check if response is null/undefined
+            if (!response) {
+                logger.error('[service]: LLM returned null/undefined response')
+                return {
+                    success: false,
+                    error: 'No response from AI model',
+                    reasoning: 'The AI model did not return a valid response.',
+                    aiModelCalls
+                }
+            }
+            // Serialization-safe logging of LLM response
+            try {
+                logger.info('[service]: LLM response type: ' + typeof response)
+                if (response && typeof response === 'object') {
+                    logger.info('[service]: LLM response keys: ' + Object.keys(response))
+                }
+                logger.info('[service]: LLM response (stringified): ' + JSON.stringify(response))
+            } catch (e) {
+                logger.error('[service]: Failed to stringify LLM response', e)
+            }
             // --- Parse LLM response for modifications ---
             try {
+                let parsedResponse
                 if (typeof response === 'string') {
-                    const parsed = JSON.parse(response)
-                    return parsed
+                    logger.debug('[service]: Parsing LLM string response')
+                    parsedResponse = JSON.parse(response)
+                    logger.info('[service]: Parsed LLM response (cursor mode):', JSON.stringify(parsedResponse))
                 } else if (typeof response === 'object') {
-                    return response
+                    parsedResponse = response
+                    logger.info('[service]: Parsed LLM response (cursor mode):', JSON.stringify(parsedResponse))
                 } else {
                     throw new Error(`Unexpected response type: ${typeof response}`)
                 }
+
+                // Apply the same validation logic as generation mode
+                // Check if the response contains complete nodes/edges (like generation mode)
+                if (parsedResponse.nodes && parsedResponse.edges) {
+                    // This is a complete flow response, validate it like generation mode
+                    const validatedResponse = AgentFlowV2Type.parse(parsedResponse)
+                    logger.info('[service]: Cursor mode - Complete flow validated:', JSON.stringify(validatedResponse, null, 2))
+                    return { ...validatedResponse, aiModelCalls }
+                } else if (parsedResponse.modifications) {
+                    // This is a modifications response (original cursor mode format)
+                    logger.info('[service]: Cursor mode - Modifications format:', JSON.stringify(parsedResponse, null, 2))
+                    return { ...parsedResponse, aiModelCalls }
+                } else {
+                    // Try to extract nodes/edges from the response if they exist in a different format
+                    const extractedResponse = extractNodesAndEdges(parsedResponse)
+                    if (extractedResponse.nodes && extractedResponse.edges) {
+                        const validatedResponse = AgentFlowV2Type.parse(extractedResponse)
+                        logger.info('[service]: Cursor mode - Extracted and validated flow:', JSON.stringify(validatedResponse, null, 2))
+                        return { ...validatedResponse, aiModelCalls }
+                    }
+
+                    // If we can't extract a valid flow, create a fallback response
+                    logger.warn('[service]: Cursor mode - Could not extract valid flow, creating fallback response')
+                    logger.warn('[service]: Cursor mode - Original parsed response:', JSON.stringify(parsedResponse, null, 2))
+
+                    // Return a structured response that the frontend can handle
+                    return {
+                        success: false,
+                        error: 'AI response format not recognized',
+                        reasoning: 'The AI response could not be processed. Please try rephrasing your request.',
+                        rawResponse: parsedResponse,
+                        aiModelCalls
+                    }
+                }
             } catch (parseError) {
-                logger.error('Failed to parse or validate LLM response:', parseError)
+                logger.error('[service]: Failed to parse or validate LLM response:', parseError)
                 return {
                     error: 'Failed to validate LLM response format',
-                    rawResponse: response
+                    rawResponse: response,
+                    aiModelCalls
                 } as any
             }
         } else {
             // ...existing generation mode...
-            logger.info('[server]: Running in generation mode for new flow')
-            logger.info('[server]: Generation mode INPUT:', JSON.stringify({ question, selectedChatModel }, null, 2))
+            logger.info('[service]: Running in generation mode for new flow')
+            logger.info('[service]: Generation mode INPUT:', JSON.stringify({ question, selectedChatModel }, null, 2))
             const prompt = sysPrompt
                 .replace('{agentFlow2Nodes}', agentFlow2Nodes)
                 .replace('{marketplaceTemplates}', marketplaceTemplates)
                 .replace('{userRequest}', question)
+            logger.debug('[service]: Generation mode prompt:', prompt)
             const options: Record<string, any> = {
                 appDataSource: getRunningExpressApp().AppDataSource,
                 databaseEntities: databaseEntities,
@@ -285,29 +379,54 @@ const generateAgentflowv2 = async (
                 const queueEvents = predictionQueue.getQueueEvents()
                 response = await job.waitUntilFinished(queueEvents)
             } else {
+                logger.info('[service]: Calling LLM for generation mode')
                 response = await generateAgentflowv2_json(
                     { prompt, componentNodes: getRunningExpressApp().nodesPool.componentNodes, toolNodes, selectedChatModel },
                     question,
                     options
                 )
             }
+            logger.info('[service]: LLM response received (generation mode)')
+            logger.info('[service]: LLM response type:', typeof response)
+            logger.info('[service]: LLM response is null/undefined:', response === null || response === undefined)
+
+            // Check if the response contains an error
+            if (response && typeof response === 'object' && response.error) {
+                logger.error('[service]: LLM returned error:', response.error)
+                return {
+                    success: false,
+                    error: response.error,
+                    reasoning: 'The AI model encountered an error while processing your request.'
+                }
+            }
+
+            // Check if response is null/undefined
+            if (!response) {
+                logger.error('[service]: LLM returned null/undefined response')
+                return {
+                    success: false,
+                    error: 'No response from AI model',
+                    reasoning: 'The AI model did not return a valid response.'
+                }
+            }
             try {
                 if (typeof response === 'string') {
+                    logger.debug('[service]: Parsing LLM string response (generation mode)')
                     const parsedResponse = JSON.parse(response)
                     const validatedResponse = AgentFlowV2Type.parse(parsedResponse)
-                    logger.info('[server]: Generation mode OUTPUT:', JSON.stringify(validatedResponse, null, 2))
+                    logger.info('[service]: Generation mode OUTPUT:', JSON.stringify(validatedResponse, null, 2))
                     return validatedResponse
                 } else if (typeof response === 'object') {
                     const validatedResponse = AgentFlowV2Type.parse(response)
-                    logger.info('[server]: Generation mode OUTPUT:', JSON.stringify(validatedResponse, null, 2))
+                    logger.info('[service]: Generation mode OUTPUT:', JSON.stringify(validatedResponse, null, 2))
                     return validatedResponse
                 } else {
                     throw new Error(`Unexpected response type: ${typeof response}`)
                 }
             } catch (parseError) {
-                logger.error('Failed to parse or validate response:', parseError)
-                logger.error('[server]: Generation mode ERROR INPUT:', JSON.stringify({ question, selectedChatModel }, null, 2))
-                logger.error('[server]: Generation mode ERROR OUTPUT:', response)
+                logger.error('[service]: Failed to parse or validate response:', parseError)
+                logger.error('[service]: Generation mode ERROR INPUT:', JSON.stringify({ question, selectedChatModel }, null, 2))
+                logger.error('[service]: Generation mode ERROR OUTPUT:', response)
                 return {
                     error: 'Failed to validate response format',
                     rawResponse: response
@@ -315,9 +434,33 @@ const generateAgentflowv2 = async (
             }
         }
     } catch (error) {
-        logger.error('[server]: FATAL ERROR:', error)
+        logger.error('[service]: FATAL ERROR:', error)
         throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, `Error: generateAgentflowv2 - ${getErrorMessage(error)}`)
     }
+}
+
+// Helper function to extract nodes and edges from various response formats
+const extractNodesAndEdges = (response: any) => {
+    // Try different possible locations for nodes and edges
+    if (response.nodes && response.edges) {
+        return response
+    }
+
+    // Check if nodes/edges are nested in a different structure
+    if (response.result && response.result.nodes && response.result.edges) {
+        return response.result
+    }
+
+    if (response.data && response.data.nodes && response.data.edges) {
+        return response.data
+    }
+
+    if (response.workflow && response.workflow.nodes && response.workflow.edges) {
+        return response.workflow
+    }
+
+    // If we can't find nodes/edges, return the original response
+    return response
 }
 
 export default {

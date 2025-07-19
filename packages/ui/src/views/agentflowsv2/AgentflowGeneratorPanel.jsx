@@ -1,27 +1,11 @@
 import { useState, useEffect, useContext } from 'react'
 import { useDispatch, useSelector } from 'react-redux'
 import PropTypes from 'prop-types'
-import {
-    Box,
-    Typography,
-    OutlinedInput,
-    Button,
-    LinearProgress,
-    Drawer,
-    IconButton,
-    Modal,
-    Paper,
-    Checkbox,
-    FormControlLabel,
-    Card,
-    Alert
-} from '@mui/material'
+import { Box, Typography, OutlinedInput, Button, Drawer, IconButton, Modal, Paper, Card } from '@mui/material'
 import chatflowsApi from '@/api/chatflows'
 import { closeSnackbar as closeSnackbarAction, enqueueSnackbar as enqueueSnackbarAction } from '@/store/actions'
 import {
     IconX,
-    IconSparkles,
-    IconChevronLeft,
     IconChevronRight,
     IconAdjustments,
     IconMessage,
@@ -32,7 +16,6 @@ import {
 } from '@tabler/icons-react'
 import useNotifier from '@/utils/useNotifier'
 import { LoadingButton } from '@mui/lab'
-import generatorGIF from '@/assets/images/agentflow-generator.gif'
 import { flowContext } from '@/store/context/ReactFlowContext'
 import { Dropdown } from '@/ui-component/dropdown/Dropdown'
 import { useTheme } from '@mui/material/styles'
@@ -102,6 +85,7 @@ const AgentflowGeneratorPanel = ({ open, onClose }) => {
     const [selectedNodes, setSelectedNodes] = useState([])
     const [flowHistory, setFlowHistory] = useState([])
     const [modificationHistory, setModificationHistory] = useState([])
+    const [backendDebugLogs, setBackendDebugLogs] = useState([])
 
     const handleChatModelDataChange = ({ inputParam, newValue }) => {
         setSelectedChatModel((prevData) => {
@@ -251,9 +235,25 @@ const AgentflowGeneratorPanel = ({ open, onClose }) => {
     const handleSendMessage = async () => {
         const trimmed = userMessage.trim()
         if (!trimmed || loading || pendingLLM) return
+        console.log('[CursorMode] User clicked send. Message:', trimmed)
         setConversation((prev) => [...prev, { role: 'user', content: trimmed }])
         setUserMessage('')
         setPendingLLM(true)
+
+        // Add timeout to prevent infinite loading
+        const timeoutId = setTimeout(() => {
+            console.log('[handleSendMessage] Timeout reached - forcing loading states to false')
+            setLoading(false)
+            setPendingLLM(false)
+            setConversation((prev) => [
+                ...prev,
+                {
+                    role: 'assistant',
+                    content: 'Request timed out. Please try again.'
+                }
+            ])
+        }, 30000) // 30 second timeout
+
         try {
             setLoading(true)
             let response
@@ -264,7 +264,7 @@ const AgentflowGeneratorPanel = ({ open, onClose }) => {
                     nodes: reactFlowInstance.getNodes(),
                     edges: reactFlowInstance.getEdges()
                 }
-
+                console.log('[CursorMode] Preparing API call with currentFlow:', currentFlow)
                 // Save current state for undo
                 setFlowHistory((prev) => [...prev, currentFlow])
 
@@ -274,18 +274,64 @@ const AgentflowGeneratorPanel = ({ open, onClose }) => {
                     currentFlow: currentFlow,
                     selectedNodeIds: selectedNodes.map((n) => n.id)
                 })
+                console.log('[CursorMode] API response:', response)
+                console.log('[CursorMode] API response.data:', response.data)
+                console.log('[CursorMode] API response.data keys:', response.data ? Object.keys(response.data) : 'no data')
 
-                if (response.data && response.data.success) {
+                // Show backend debug logs in browser console and UI
+                if (response.data && response.data.debugLogs) {
+                    response.data.debugLogs.forEach((log) => {
+                        console.log('[backend-debug]', log)
+                    })
+                    setBackendDebugLogs(response.data.debugLogs)
+                } else {
+                    setBackendDebugLogs([])
+                }
+
+                // Print backend input/output debug data
+                if (response.data && response.data.debugData) {
+                    console.log('[backend-debug] INPUT:', response.data.debugData.input)
+                    console.log('[backend-debug] OUTPUT:', response.data.debugData.output)
+                }
+
+                // Step 2: Print AI model calls (input/output) if present
+                if (response.data && response.data.aiModelCalls) {
+                    response.data.aiModelCalls.forEach((call, idx) => {
+                        console.log(`[ai-model-call ${idx}] INPUT:`, call.input)
+                        console.log(`[ai-model-call ${idx}] OUTPUT:`, call.output)
+                    })
+                }
+
+                // Handle both response formats: complete flow or modifications
+                if (response.data && response.data.nodes && response.data.edges) {
+                    // Complete flow response (like generation mode)
+                    console.log('[CursorMode] Complete flow response received:', response.data)
+
+                    // Apply the complete flow to the canvas
+                    reactFlowInstance.setNodes(response.data.nodes)
+                    reactFlowInstance.setEdges(response.data.edges)
+
+                    setConversation((prev) => [
+                        ...prev,
+                        {
+                            role: 'assistant',
+                            content: 'Flow updated successfully! The AI has provided a complete updated flow based on your request.',
+                            nodes: response.data.nodes,
+                            edges: response.data.edges
+                        }
+                    ])
+                } else if (response.data && response.data.modifications) {
+                    // Modifications response (original cursor mode format)
+                    console.log('[CursorMode] Modifications response received:', response.data)
                     const result = applyCursorModifications(currentFlow, response.data.modifications)
+                    console.log('[CursorMode] Modifications applied:', result)
 
                     if (result.success) {
                         // Update canvas with modifications
                         reactFlowInstance.setNodes(result.nodes)
                         reactFlowInstance.setEdges(result.edges)
-
                         // Highlight modifications
                         highlightModifications(reactFlowInstance, result.highlightedElements)
-
                         // Save modification history
                         setModificationHistory((prev) => [
                             ...prev,
@@ -295,7 +341,6 @@ const AgentflowGeneratorPanel = ({ open, onClose }) => {
                                 timestamp: Date.now()
                             }
                         ])
-
                         setConversation((prev) => [
                             ...prev,
                             {
@@ -306,6 +351,7 @@ const AgentflowGeneratorPanel = ({ open, onClose }) => {
                             }
                         ])
                     } else {
+                        console.error('[CursorMode] Failed to apply modifications:', result.error)
                         setConversation((prev) => [
                             ...prev,
                             {
@@ -315,11 +361,16 @@ const AgentflowGeneratorPanel = ({ open, onClose }) => {
                         ])
                     }
                 } else {
+                    console.error('[CursorMode] API did not return valid response format:', response.data)
+                    // Handle error responses from backend
+                    const errorMessage =
+                        response.data?.reasoning || response.data?.error || response.data?.message || 'Failed to process cursor request.'
+
                     setConversation((prev) => [
                         ...prev,
                         {
                             role: 'assistant',
-                            content: response.data?.reasoning || 'Failed to process cursor request.'
+                            content: errorMessage
                         }
                     ])
                 }
@@ -334,6 +385,10 @@ const AgentflowGeneratorPanel = ({ open, onClose }) => {
                     history: historyForBackend
                 })
 
+                console.log('[GenerateMode] API response:', response)
+                console.log('[GenerateMode] API response.data:', response.data)
+                console.log('[GenerateMode] API response.data keys:', response.data ? Object.keys(response.data) : 'no data')
+
                 if (response.data && response.data.nodes && response.data.edges) {
                     setConversation((prev) => [
                         ...prev,
@@ -345,11 +400,19 @@ const AgentflowGeneratorPanel = ({ open, onClose }) => {
                         }
                     ])
                 } else {
+                    console.error('[GenerateMode] API did not return valid response format:', response.data)
+                    const errorMessage =
+                        response.data?.reasoning ||
+                        response.data?.error ||
+                        response.data?.message ||
+                        response.error ||
+                        'Failed to generate agentflow.'
+
                     setConversation((prev) => [
                         ...prev,
                         {
                             role: 'assistant',
-                            content: response.error || 'Failed to generate agentflow.'
+                            content: errorMessage
                         }
                     ])
                 }
@@ -377,6 +440,8 @@ const AgentflowGeneratorPanel = ({ open, onClose }) => {
                 }
             ])
         } finally {
+            console.log('[handleSendMessage] Finally block - setting loading states to false')
+            clearTimeout(timeoutId) // Clear the timeout
             setLoading(false)
             setPendingLLM(false)
         }
@@ -471,6 +536,29 @@ const AgentflowGeneratorPanel = ({ open, onClose }) => {
         ])
 
         // Simulate the cursor mode request
+        setTimeout(() => {
+            handleSendMessage()
+        }, 100)
+    }
+
+    // Test generation mode functionality
+    const testGenerationMode = () => {
+        if (cursorMode) {
+            setCursorMode(false)
+        }
+
+        const testMessage = 'Create a simple workflow that searches the web and summarizes the results'
+        setUserMessage(testMessage)
+
+        setConversation((prev) => [
+            ...prev,
+            {
+                role: 'user',
+                content: testMessage
+            }
+        ])
+
+        // Simulate the generation mode request
         setTimeout(() => {
             handleSendMessage()
         }, 100)
@@ -617,6 +705,9 @@ const AgentflowGeneratorPanel = ({ open, onClose }) => {
                         </Typography>
                         <Button size='small' variant='outlined' onClick={testCursorMode} sx={{ mt: 1, width: '100%' }}>
                             Test Cursor Mode
+                        </Button>
+                        <Button size='small' variant='outlined' onClick={testGenerationMode} sx={{ mt: 1, width: '100%' }}>
+                            Test Generation Mode
                         </Button>
                     </Box>
                 )}
@@ -818,6 +909,13 @@ const AgentflowGeneratorPanel = ({ open, onClose }) => {
                         </Box>
                     )}
                 </Box>
+                {/* Backend Debug Logs Panel */}
+                {backendDebugLogs.length > 0 && (
+                    <Box sx={{ p: 2, bgcolor: '#222', color: '#fff', borderRadius: 2, mt: 2 }}>
+                        <Typography variant='subtitle2'>Backend Debug Logs:</Typography>
+                        <pre style={{ whiteSpace: 'pre-wrap' }}>{backendDebugLogs.join('\n')}</pre>
+                    </Box>
+                )}
             </Box>
         </Drawer>
     )
